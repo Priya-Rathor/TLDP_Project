@@ -197,7 +197,7 @@ def create_short_ppt(template_path: str, output_path: str, form_data: dict):
     Generate a short PPT with only limited fields.
     """
 
-    # ✅ Build only required text mapping
+    #  Build only required text mapping
     text_map = {
         "Project Name": form_data.get("Project Name"),
         "Project Type": form_data.get("What is the nature of your project?"),
@@ -215,7 +215,7 @@ def create_short_ppt(template_path: str, output_path: str, form_data: dict):
         "{{Image7}}": form_data.get("{{Image7}}"),
     }
 
-    # ✅ Generate PPT
+    #  Generate PPT
     replace_text_and_images_in_ppt(template_path, output_path, text_map)
 
     print(f"✅ Short PPT generated: {output_path}")
@@ -248,7 +248,7 @@ def get_item_files(item_id: int):
     assets = items[0].get("assets", [])
     return [{"id": a["id"], "name": a["name"], "url": a["public_url"], "ext": a["file_extension"]} for a in assets if a.get("public_url")]
 
-# ✅ Replace placeholders in PPT and add images
+# Replace placeholders in PPT and add images
 def replace_text_placeholders(prs: Presentation, text_map: dict):
     for slide in prs.slides:
         for shape in slide.shapes:
@@ -317,7 +317,7 @@ def verify_files_exist(file_paths):
             print(f"❌ File too small (possible error): {file_path} ({file_size} bytes)")
             return False
             
-    print("✅ Both PPT files verified successfully")
+    print(" Both PPT files verified successfully")
     return True
 
 def send_email_safely(email: str, item_id: str, file_paths: list, event_id: str):
@@ -468,12 +468,12 @@ async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
         trigger_time = event.get("triggerTime")
         event_id = f"{item_id}_{trigger_time}"
 
-        # ✅ Enhanced deduplication check
+        #  Enhanced deduplication check
         if is_duplicate(event_id):
             print(f"⚠️ Duplicate webhook skipped: {event_id}")
             return {"status": "duplicate_skipped"}
 
-        # ✅ Email-specific duplication check
+        #  Email-specific duplication check
         if is_email_already_sent(event_id):
             print(f"📧 Email already sent for event {event_id}")
             return {"status": "email_already_sent"}
@@ -490,7 +490,7 @@ async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
 
         print(f"📧 Processing for email: {email}, event: {event_id}")
 
-        # ✅ Background task (avoid retries)
+        # Background task (avoid retries)
         background_tasks.add_task(process_event, event, email)
 
     return {"status": "ok"}
