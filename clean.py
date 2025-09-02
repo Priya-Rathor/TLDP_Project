@@ -1,30 +1,21 @@
-import cv2
+from rembg import remove
 from PIL import Image
+import io
 
-def remove_color_keep_lines(input_path, output_path):
-    # Read image
-    img = cv2.imread(input_path)
+# Use raw string for Windows paths
+input_path = r"D:\TLDP_Project\image\Projet DUFOURCQ- 2nd Floor.jpg"
+output_path = "output.png"
 
-    # Convert to grayscale
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+# Open image
+img = Image.open(input_path)
 
-    # Invert image (optional, makes lines darker)
-    inverted = cv2.bitwise_not(gray)
+# Remove background (returns bytes)
+output = remove(img)
 
-    # Apply adaptive threshold (extract lines)
-    thresh = cv2.adaptiveThreshold(
-        inverted, 255,
-        cv2.ADAPTIVE_THRESH_MEAN_C,
-        cv2.THRESH_BINARY,
-        15, -2
-    )
+# Convert bytes to PIL Image
+output_img = Image.open(io.BytesIO(output)).convert("RGBA")
 
-    # Invert back to black lines on white background
-    cleaned = cv2.bitwise_not(thresh)
+# Save result
+output_img.save(output_path)
 
-    # Save result
-    cv2.imwrite(output_path, cleaned)
-    print(f"✅ Saved cleaned line drawing to {output_path}")
-
-# Example usage
-remove_color_keep_lines("D:\TLDP_Project\image\Projet DUFOURCQ - 1st FLOOR WIP.jpg", "floorplan_clean.png")
+print("✅ Background removed and saved as", output_path)
