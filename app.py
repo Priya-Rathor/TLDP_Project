@@ -493,24 +493,48 @@ def get_file_download_url(asset_id: int) -> str:
 
 
 
+from pptx.oxml.ns import qn
 
+def delete_slide(prs, slide):
+    """
+    Safely delete a slide from a Presentation object.
+    """
+    slide_id = slide.slide_id
+
+    # Find the slide's rel_id
+    slide_rel_id = None
+    for rel_id, rel in prs.part.rels.items():
+        if rel.reltype == "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" and rel._target == slide.part:
+            slide_rel_id = rel_id
+            break
+
+    # Remove from sldIdLst (slideIdList)
+    sldIdLst = prs.slides._sldIdLst  
+    for sldId in list(sldIdLst):
+        if sldId.rId == slide_rel_id:
+            sldIdLst.remove(sldId)
+            break
+
+    # Drop the relationship if it exists
+    if slide_rel_id and slide_rel_id in prs.part.rels:
+        prs.part.drop_rel(slide_rel_id)
 
 
 def replace_placeholders_with_images(pptx_path, output_path, categorized_images):
     """
-    Replace placeholders like {{Image1}}, {{Layout2}}, {{Elevation1}}, {{Inspiration1}}, {{Existing1}}
-    with categorized images. 
+    Replace placeholders like {{Image1}}, {{Layout2}}, {{Elevation1}}, {{Inspiration1}}, {{Existing1}}, {{Style1}}
+    with categorized images.
     If no image is found for any placeholder and no images remain in the slide, delete the slide.
     """
     prs = Presentation(pptx_path)
 
-    # Build category mapping
+    # ✅ Build category mapping (added Style)
     category_map = {
-        "Image": sum(categorized_images.values(), []),  # All images flattened
         "Layout": categorized_images.get("floor_plans", []),
         "Elevation": categorized_images.get("elevation_drawings", []),
         "Inspiration": categorized_images.get("inspiration_images", []),
-        "Existing": categorized_images.get("existing_pictures", []),
+        "Image": categorized_images.get("existing_pictures", []),
+        "Style": categorized_images.get("style_images", []),   # NEW
     }
 
     slides_to_delete = []
@@ -560,7 +584,7 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
             else:
                 print(f"⚠️ No image available for {text}, placeholder kept")
 
-        # If slide had placeholders but no image was inserted, and no picture shapes exist → mark for deletion
+        # ✅ If slide had placeholders but no replacement and no pictures → delete it
         if found_placeholder and not replaced_any:
             has_pictures = any(shape.shape_type == 13 for shape in slide.shapes)  # 13 = picture
             if not has_pictures:
@@ -569,11 +593,46 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
 
     # Delete marked slides
     for slide in slides_to_delete:
-        prs.slides._sldIdLst.remove(slide._element)
+        delete_slide(prs, slide)
 
     prs.save(output_path)
     print(f"💾 Saved updated presentation to {output_path}")
     return output_path
+
+
+def replace_style_images(prs, style_folder):
+    slides_to_delete = []
+    for slide in prs.slides:
+        delete_slide_flag = False
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    for run in para.runs:
+                        if "{{style" in run.text:
+                            placeholder = run.text.strip()
+                            style_number = placeholder.replace("{{style", "").replace("}}", "")
+                            img_path = os.path.join(style_folder, f"style{style_number}.jpg")
+
+                            if os.path.exists(img_path):  
+                                # ✅ Replace with local style image
+                                left = top = Inches(1)
+                                width = height = Inches(5)
+                                slide.shapes.add_picture(img_path, left, top, width=width, height=height)
+                                run.text = ""
+                            else:
+                                print(f"⚠️ No style image available for {placeholder}, slide will be deleted")
+                                delete_slide_flag = True
+        if delete_slide_flag:
+            slides_to_delete.append(slide)
+
+    # ✅ Delete slides with missing style images
+    for slide in slides_to_delete:
+        delete_slide(prs, slide)
+
+    return prs
+
+
+
 
 @app.post("/monday-webhook")
 async def monday_webhook(request: Request):
@@ -586,15 +645,19 @@ async def monday_webhook(request: Request):
         form_data = map_webhook_to_form(event)
 
         # --- Style Images ---
-        styles_raw = None
+        styles_raw = []
         col_vals = event.get("columnValues", {})
-        if "dropdown" in col_vals:  
-            chosen = col_vals["dropdown"].get("chosenValues", [])
-            styles_raw = [c["name"] for c in chosen]
-        if styles_raw:
-            form_data.update(get_style_images(styles_raw))
-            form_data["Which style(s) do you like?"] = ", ".join(styles_raw)
+        for key, val in col_vals.items():
+           if isinstance(val, dict) and val.get("type") == "dropdown":
+             chosen = val.get("chosenValues", [])
+             for c in chosen:
+                 if "name" in c:
+                     styles_raw.append(c["name"])
 
+# 🎨 Map style images
+        if styles_raw:
+          form_data.update(get_style_images(styles_raw))
+          form_data["Which style(s) do you like?"] = ", ".join(styles_raw)
         # --- Email Extraction ---
         email = None
         if "email" in col_vals:
@@ -631,6 +694,8 @@ async def monday_webhook(request: Request):
         # Step 2: Replace image placeholders (works on already text-updated PPT)
         replace_placeholders_with_images(OUTPUT_PATH, OUTPUT_PATH, categorized_images)
 
+        # Step 3: Replace style placeholders
+        replace_style_images(OUTPUT_PATH, OUTPUT_PATH, get_style_images(styles_raw))
 
         
         # Return response with categorized images
