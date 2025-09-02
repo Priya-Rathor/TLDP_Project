@@ -600,37 +600,46 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
     return output_path
 
 
-def replace_style_images(prs, style_folder):
-    slides_to_delete = []
-    for slide in prs.slides:
-        delete_slide_flag = False
+def replace_style_images(pptx_path, output_path, style_images):
+    prs = Presentation(pptx_path)
+
+    for slide in prs.slides[:]:  # iterate over slides
+        replaced_any = False
+        found_placeholder = False
+
         for shape in slide.shapes:
-            if shape.has_text_frame:
-                for para in shape.text_frame.paragraphs:
-                    for run in para.runs:
-                        if "{{style" in run.text:
-                            placeholder = run.text.strip()
-                            style_number = placeholder.replace("{{style", "").replace("}}", "")
-                            img_path = os.path.join(style_folder, f"style{style_number}.jpg")
+            if not shape.has_text_frame:
+                continue
 
-                            if os.path.exists(img_path):  
-                                # ✅ Replace with local style image
-                                left = top = Inches(1)
-                                width = height = Inches(5)
-                                slide.shapes.add_picture(img_path, left, top, width=width, height=height)
-                                run.text = ""
-                            else:
-                                print(f"⚠️ No style image available for {placeholder}, slide will be deleted")
-                                delete_slide_flag = True
-        if delete_slide_flag:
-            slides_to_delete.append(slide)
+            text = shape.text.strip()
+            match = re.match(r"\{Style(\d+)\}", text)
+            if not match:
+                continue
 
-    # ✅ Delete slides with missing style images
-    for slide in slides_to_delete:
-        delete_slide(prs, slide)
+            found_placeholder = True
+            num = int(match.group(1)) - 1
 
-    return prs
+            if num < len(style_images):
+                img_path = style_images[num]
+                print(f"✅ Replacing {text} with {img_path}")
 
+                left, top, width, height = shape.left, shape.top, shape.width, shape.height
+                sp = shape._element
+                sp.getparent().remove(sp)
+
+                slide.shapes.add_picture(img_path, left, top, width, height)
+                replaced_any = True
+            else:
+                print(f"⚠️ No style image available for {text}, slide will be deleted")
+
+        # If placeholder found but no image replaced → delete slide
+        if found_placeholder and not replaced_any:
+            rId = slide._element.getparent().getparent().getparent().get("r:id")
+            slides_part = prs.slides.part
+            slides_part.drop_rel(rId)
+            prs.slides._sldIdLst.remove(slide._element)
+
+    prs.save(output_path)
 
 
 
