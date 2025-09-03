@@ -739,22 +739,29 @@ async def monday_webhook(request: Request):
         # 3) Generate BROCHURE PPT
         # ======================
         try:
-            # Smart picking of images
-            circle_img = style_images[0] if style_images else (categorized_images.get("existing_pictures") or [None])[0]
-            calendar_bg = (categorized_images.get("existing_pictures") or [None])[0]  # use any existing picture
-            layout_img = (categorized_images.get("floor_plans") or [None])[0]  # use floor plan as layout
-            layout_bg = (categorized_images.get("existing_pictures") or [None])[1] if len(categorized_images.get("existing_pictures", [])) > 1 else calendar_bg
-            extra_images = style_images or categorized_images.get("existing_pictures", [])
+            # Pick best-fit images from categorized_images + styles
+            circle_img = (categorized_images.get("existing_pictures") or [None])[0]  
+            calendar_bg = (categorized_images.get("existing_pictures") or [None])[0]
+            layout_img = (categorized_images.get("floor_plans") or [None])[0]
+            layout_bg = (
+                (categorized_images.get("existing_pictures") or [None])[1]
+                if len(categorized_images.get("existing_pictures", [])) > 1
+                else calendar_bg
+            )
+            extra_images =[]
+            extra_images.extend(categorized_images.get("existing_pictures", []))
+            extra_images.extend(categorized_images.get("floor_plans", []))
+            extra_images.extend(categorized_images.get("elevation_drawings", []))
 
             brochure_ppt = create_brochure_ppt(
                 BTEMPLATE_PATH,
-                BOUTPUT_PATH.replace(".pptx", f"_{item_id}_brochure.pptx"),
+                BOUTPUT_PATH,
                 form_data=form_data,
                 circle_img=circle_img,
                 calendar_bg=calendar_bg,
                 layout_img=layout_img,
                 layout_bg=layout_bg,
-                extra_images=extra_images
+                extra_images=extra_images,
             )
 
             results["brochure"] = {
@@ -763,12 +770,16 @@ async def monday_webhook(request: Request):
                 "styles_processed": selected_styles,
                 "style_images_found": len(style_images),
                 "email": email,
-                "project_name": form_data.get("Project Name", "Unknown")
+                "project_name": form_data.get("Project Name", "Unknown"),
             }
 
             print(f"✅ Brochure PPT created: {brochure_ppt}")
-            # Optional email
-            # send_email_with_ppt(email, brochure_ppt, form_data)
+            # send_email_with_ppt(email, brochure_ppt, form_data)  # optional email sending
+
+        except Exception as e:
+            print(f"⚠️ Failed to create brochure PPT: {e}")
+            results["brochure"] = {"error": str(e)}
+
 
         except Exception as e:
             print(f"⚠️ Failed to create brochure PPT: {e}")
@@ -779,30 +790,30 @@ async def monday_webhook(request: Request):
         # ======================
         # 2) Generate FULL PPT
         # ======================
-        try:
-            form_data_for_text = {k: v for k, v in form_data.items() if k not in ["selected_styles"]}
-            replace_text_in_ppt(TEMPLATE_PATH, OUTPUT_PATH, form_data_for_text)
+     #   try:
+     #       form_data_for_text = {k: v for k, v in form_data.items() if k not in ["selected_styles"]}
+     #       replace_text_in_ppt(TEMPLATE_PATH, OUTPUT_PATH, form_data_for_text)
 
-            if style_images:
-                replace_style_placeholders(OUTPUT_PATH, OUTPUT_PATH, style_images)
-
-            replace_placeholders_with_images(OUTPUT_PATH, OUTPUT_PATH, categorized_images)
-
-            results["full"] = {
-                "output_file": OUTPUT_PATH,
-                "ppt_type": "full",
-                "styles_processed": selected_styles,
-                "style_images_found": len(style_images),
-                "categorized_images": categorized_images,
-                "email": email,
-                "project_name": form_data.get("Project Name", "Unknown")
-            }
-            print(f"✅ Full PPT created: {OUTPUT_PATH}")
+      #      if style_images:
+       #         replace_style_placeholders(OUTPUT_PATH, OUTPUT_PATH, style_images)
+#
+ #           replace_placeholders_with_images(OUTPUT_PATH, OUTPUT_PATH, categorized_images)
+#
+ #           results["full"] = {
+  #              "output_file": OUTPUT_PATH,
+   #             "ppt_type": "full",
+    #            "styles_processed": selected_styles,
+     #           "style_images_found": len(style_images),
+      #          "categorized_images": categorized_images,
+       #         "email": email,
+        #        "project_name": form_data.get("Project Name", "Unknown")
+         #   }
+          #  print(f"✅ Full PPT created: {OUTPUT_PATH}")
             # Optional: send email
             # send_email_with_ppt(email, OUTPUT_PATH, form_data)
-        except Exception as e:
-            print(f"⚠️ Failed to create full PPT: {e}")
-            results["full"] = {"error": str(e)}
+        # except Exception as e:
+          #  print(f"⚠️ Failed to create full PPT: {e}")
+           # results["full"] = {"error": str(e)}
 
         return {
             "status": "success",

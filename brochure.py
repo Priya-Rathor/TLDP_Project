@@ -4,7 +4,7 @@ from pptx import Presentation
 from pptx.util import Inches
 from datetime import datetime, timedelta
 from PIL import Image, ImageDraw
-import platform
+import platform, os, requests
 
 # -------------------------
 # Constants
@@ -13,6 +13,25 @@ if platform.system() == "Windows":
     DAY_FORMAT = "%#d-%b"
 else:
     DAY_FORMAT = "%-d-%b"
+
+
+# -------------------------
+# Helper: Load image from URL or path
+# -------------------------
+def get_local_image(path_or_url, tmp_name="temp_img.png"):
+    if not path_or_url:
+        return None
+    if isinstance(path_or_url, str) and path_or_url.startswith("http"):
+        try:
+            resp = requests.get(path_or_url, timeout=10)
+            resp.raise_for_status()
+            with open(tmp_name, "wb") as f:
+                f.write(resp.content)
+            return tmp_name
+        except Exception as e:
+            print(f"⚠️ Failed to download image {path_or_url}: {e}")
+            return None
+    return path_or_url if os.path.exists(path_or_url) else None
 
 
 # -------------------------
@@ -30,15 +49,14 @@ def make_circle_image(img_path, output_path="circle_image.png"):
     return output_path
 
 
-def replace_with_circle_image(prs, img_path):
+def replace_with_circle_image(slide, img_path):
     cropped_path = make_circle_image(img_path)
-    for slide in prs.slides:
-        for shape in slide.shapes:
-            if hasattr(shape, "text") and "{{image1}}" in shape.text:
-                left, top, width, height = shape.left, shape.top, shape.width, shape.height
-                slide.shapes._spTree.remove(shape._element)
-                slide.shapes.add_picture(cropped_path, left, top, width, height)
-    return prs
+    for shape in list(slide.shapes):
+        if hasattr(shape, "text") and "{{image1}}" in shape.text:
+            left, top, width, height = shape.left, shape.top, shape.width, shape.height
+            slide.shapes._spTree.remove(shape._element)
+            slide.shapes.add_picture(cropped_path, left, top, width, height)
+    return slide
 
 
 # -------------------------
@@ -72,68 +90,77 @@ def iter_shapes(shapes):
             yield from iter_shapes(shp.shapes)
 
 
-def update_calendar_with_bg(prs, image_path, start_date=None):
+def update_calendar_with_bg(prs, slide, image_path, start_date=None):
     mapping = build_mapping(start_date)
     slide_width, slide_height = prs.slide_width, prs.slide_height
-    for slide in prs.slides:
-        # Insert full background image
+
+    if image_path:
         pic = slide.shapes.add_picture(image_path, 0, 0, width=slide_width, height=slide_height)
         slide.shapes._spTree.remove(pic._element)
         slide.shapes._spTree.insert(2, pic._element)
-        # Replace text
-        for shp in iter_shapes(slide.shapes):
-            if getattr(shp, "has_table", False):
-                for row in shp.table.rows:
-                    for cell in row.cells:
-                        replace_text_in_frame(cell.text_frame, mapping)
-            elif getattr(shp, "has_text_frame", False):
-                replace_text_in_frame(shp.text_frame, mapping)
-    return prs
+
+    for shp in iter_shapes(slide.shapes):
+        if getattr(shp, "has_table", False):
+            for row in shp.table.rows:
+                for cell in row.cells:
+                    replace_text_in_frame(cell.text_frame, mapping)
+        elif getattr(shp, "has_text_frame", False):
+            replace_text_in_frame(shp.text_frame, mapping)
+    return slide
 
 
 # -------------------------
 # Layout + extra images
 # -------------------------
-def replace_layout_and_append_images(prs, layout_img_path, bg_img_path, extra_images):
+def replace_layout_and_append_images(prs, slide, layout_img_path, bg_img_path, extra_images):
     slide_width, slide_height = prs.slide_width, prs.slide_height
-    for slide in prs.slides:
-        for shape in slide.shapes:
-            if hasattr(shape, "text") and "{{Layout1}}" in shape.text:
+
+    # Replace Layout placeholder
+    for shape in list(slide.shapes):
+        if hasattr(shape, "text") and "{{Layout1}}" in shape.text:
+            left, top, width, height = shape.left, shape.top, shape.width, shape.height
+            slide.shapes._spTree.remove(shape._element)
+            if layout_img_path:
+                slide.shapes.add_picture(layout_img_path, left, top, width, height)
+
+    # Add background
+    if bg_img_path:
+        pic = slide.shapes.add_picture(bg_img_path, 0, 0, slide_width, slide_height)
+        slide.shapes._spTree.remove(pic._element)
+        slide.shapes._spTree.insert(2, pic._element)
+
+    # Replace {{image1}}, {{image2}}, ... with extra images
+    for idx, img_path in enumerate(extra_images, start=1):
+        placeholder = f"{{{{image{idx}}}}}"
+        for shape in list(slide.shapes):
+            if hasattr(shape, "text") and placeholder in shape.text:
                 left, top, width, height = shape.left, shape.top, shape.width, shape.height
                 slide.shapes._spTree.remove(shape._element)
-                slide.shapes.add_picture(layout_img_path, left, top, width, height)
-                # Add background
-                pic = slide.shapes.add_picture(bg_img_path, 0, 0, slide_width, slide_height)
-                slide.shapes._spTree.remove(pic._element)
-                slide.shapes._spTree.insert(2, pic._element)
+                slide.shapes.add_picture(img_path, left, top, width, height)
 
-    # Append new slides with extra images
-    blank_layout = prs.slide_layouts[6]  # blank layout
-    for img in extra_images:
-        slide = prs.slides.add_slide(blank_layout)
-        slide.shapes.add_picture(img, Inches(1), Inches(1), width=Inches(7), height=Inches(5))
-    return prs
+    return slide
+
 
 
 # -------------------------
 # Text replacement helper
 # -------------------------
-def replace_text_in_ppt(prs, text_map):
-    for slide in prs.slides:
-        for shp in iter_shapes(slide.shapes):
-            if getattr(shp, "has_text_frame", False):
-                for para in shp.text_frame.paragraphs:
-                    for run in para.runs:
-                        for ph, val in text_map.items():
-                            if ph in run.text:
-                                run.text = run.text.replace(ph, val)
-    return prs
+def replace_text_in_ppt(slide, text_map):
+    for shp in iter_shapes(slide.shapes):
+        if getattr(shp, "has_text_frame", False):
+            for para in shp.text_frame.paragraphs:
+                for run in para.runs:
+                    for ph, val in text_map.items():
+                        if ph in run.text:
+                            run.text = run.text.replace(ph, val)
+    return slide
 
 
 # -------------------------
 # Main: Create Brochure
 # -------------------------
-def create_brochure_ppt(template_path, output_path, form_data, circle_img, calendar_bg, layout_img, layout_bg, extra_images):
+def create_brochure_ppt(template_path, output_path, form_data,
+                        circle_img, calendar_bg, layout_img, layout_bg, extra_images):
     """
     Create a brochure PPT with:
     1st Page  -> Replace text fields + circular cropped image
@@ -143,33 +170,47 @@ def create_brochure_ppt(template_path, output_path, form_data, circle_img, calen
     print(f"🔄 Creating brochure PPT from {template_path}")
     prs = Presentation(template_path)
 
-    # -------------------------
-    # 1️⃣ First Page (Text + Circle Image)
-    # -------------------------
-    print("🖼️ Updating first page with text + circle image...")
-    text_map = {
-        "Project Name": form_data.get("Project Name", ""),
-        "Project Type": form_data.get("What is the nature of your project?", ""),
-        "space To be Designed": form_data.get("Space(S) to be designed", ""),
-        "Room size": form_data.get("What is the area size?", ""),
-        "style(s) selected": form_data.get("Which style(s) do you like?", ""),
-        "Location": f"{form_data.get('City', '')}, {form_data.get('Country', '')}",
-    }
-    text_map = {k: v for k, v in text_map.items() if v}
-    prs = replace_text_in_ppt(prs, text_map)
-    prs = replace_with_circle_image(prs, circle_img)
+    # Normalize images (URL → local)
+    circle_img = get_local_image(circle_img, "circle.png")
+    calendar_bg = get_local_image(calendar_bg, "calendar_bg.png")
+    layout_img = get_local_image(layout_img, "layout_img.png")
+    layout_bg = get_local_image(layout_bg, "layout_bg.png")
+    extra_images = [get_local_image(img, f"extra_{i}.png") for i, img in enumerate(extra_images) if img]
 
     # -------------------------
-    # 2️⃣ Second Page (Calendar + BG Image)
+    # 1️⃣ First Page
     # -------------------------
-    print("📅 Updating second page with calendar + background...")
-    prs = update_calendar_with_bg(prs, calendar_bg)
+    if len(prs.slides) > 0:
+        print("🖼️ Updating first page with text + circle image...")
+        slide = prs.slides[0]
+        text_map = {
+            "Project Name": form_data.get("Project Name", ""),
+            "Project Type": form_data.get("What is the nature of your project?", ""),
+            "space To be Designed": form_data.get("Space(S) to be designed", ""),
+            "Room size": form_data.get("What is the area size?", ""),
+            "style(s) selected": form_data.get("Which style(s) do you like?", ""),
+            "Location": f"{form_data.get('City', '')}, {form_data.get('Country', '')}",
+        }
+        text_map = {k: v for k, v in text_map.items() if v}
+        replace_text_in_ppt(slide, text_map)
+        if circle_img:
+            replace_with_circle_image(slide, circle_img)
 
     # -------------------------
-    # 3️⃣ Third Page (Layout + BG + Extra Images)
+    # 2️⃣ Second Page
     # -------------------------
-    print("📐 Updating third page with layout + extra images...")
-    prs = replace_layout_and_append_images(prs, layout_img, layout_bg, extra_images)
+    if len(prs.slides) > 1:
+        print("📅 Updating second page with calendar + background...")
+        slide = prs.slides[1]
+        update_calendar_with_bg(prs, slide, calendar_bg)
+
+    # -------------------------
+    # 3️⃣ Third Page
+    # -------------------------
+    if len(prs.slides) > 2:
+        print("📐 Updating third page with layout + extra images...")
+        slide = prs.slides[2]
+        replace_layout_and_append_images(prs, slide, layout_img, layout_bg, extra_images)
 
     # -------------------------
     # Save final brochure
