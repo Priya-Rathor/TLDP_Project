@@ -13,7 +13,7 @@ from pptx.util import Inches
 app = FastAPI()
 
 TEMPLATE_PATH ="template.pptx"
-BTEMPLATE_PATH="btemplate.pptx"
+BTEMPLATE_PATH="btemplate1.pptx"
 OUTPUT_PATH = "output.pptx"
 BOUTPUT_PATH = "Boutput.pptx"
 MONDAY_API_KEY = os.getenv("MONDAY_API_KEY", "eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjU0NjI5MjM1NywiYWFpIjoxMSwidWlkIjo3NDc3Njk5NywiaWFkIjoiMjAyNS0wOC0wNFQwOTo0MzowNS4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6MTIxNDMyMDQsInJnbiI6InVzZTEifQ.yYeelRXHOZlaxwYHBAvi6eXRzD2fNn1H-jX-Pd8Ukcw")
@@ -248,15 +248,22 @@ def create_short_ppt(template_path: str, output_path: str, form_data: dict):
     """
     Generate a short PPT with only limited fields.
     """
+    print(f"🔄 Creating short PPT using template: {template_path}")
+    
     # ✅ Build only required text mapping (removed image mappings)
     text_map = {
-        "Project Name": form_data.get("Project Name"),
-        "Project Type": form_data.get("What is the nature of your project?"),
-        "space To be Designed": form_data.get("Space(S) to be designed"),
-        "Room size": form_data.get("What is the area size?"),
-        "style(s) selected": form_data.get("Which style(s) do you like?"),
+        "Project Name": form_data.get("Project Name", ""),
+        "Project Type": form_data.get("What is the nature of your project?", ""),
+        "space To be Designed": form_data.get("Space(S) to be designed", ""),
+        "Room size": form_data.get("What is the area size?", ""),
+        "style(s) selected": form_data.get("Which style(s) do you like?", ""),
         "Location": f"{form_data.get('City', '')}, {form_data.get('Country', '')}",
     }
+
+    # Clean up empty values
+    text_map = {k: v for k, v in text_map.items() if v}
+    
+    print(f"📝 Text mappings for short PPT: {text_map}")
 
     # ✅ Generate PPT (only text replacement)
     replace_text_in_ppt(template_path, output_path, text_map)
@@ -329,20 +336,40 @@ def replace_text_in_ppt(template_path: str, output_path: str, text_map: dict):
     """
     Replace only text placeholders in PPT (no image insertion)
     """
+    print(f"🔄 Replacing text in PPT: {template_path} -> {output_path}")
     prs = Presentation(template_path)
     
-    for slide in prs.slides:
-        for shape in slide.shapes:
+    replacements_made = 0
+    
+    for slide_idx, slide in enumerate(prs.slides):
+        for shape_idx, shape in enumerate(slide.shapes):
             if not shape.has_text_frame:
                 continue
-            for p in shape.text_frame.paragraphs:
-                for run in p.runs:
+            
+            for p_idx, p in enumerate(shape.text_frame.paragraphs):
+                for r_idx, run in enumerate(p.runs):
+                    original_text = run.text
+                    
                     for placeholder, value in text_map.items():
                         if not value:
                             continue
-                        if placeholder.lower() in run.text.lower():
+                        
+                        # Try exact match first
+                        if placeholder in run.text:
                             run.text = run.text.replace(placeholder, str(value))
+                            replacements_made += 1
+                            print(f"✅ Replaced '{placeholder}' with '{value}' in slide {slide_idx + 1}")
+                        
+                        # Try case-insensitive match
+                        elif placeholder.lower() in run.text.lower():
+                            # Find the actual text to replace (preserving case)
+                            import re
+                            pattern = re.compile(re.escape(placeholder), re.IGNORECASE)
+                            run.text = pattern.sub(str(value), run.text)
+                            replacements_made += 1
+                            print(f"✅ Replaced '{placeholder}' (case-insensitive) with '{value}' in slide {slide_idx + 1}")
     
+    print(f"📝 Total replacements made: {replacements_made}")
     prs.save(output_path)
     return output_path
 
@@ -678,10 +705,40 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
     print(f"💾 Saved updated presentation to {output_path}")
     return output_path
 
+def should_create_short_ppt(form_data: dict, categorized_images: dict) -> bool:
+    """
+    Determine if a short PPT should be created instead of full PPT.
+    Returns True if there are insufficient images or data for a full presentation.
+    """
+    # Count total images available
+    total_images = sum(len(images) for images in categorized_images.values())
+    
+    # Check if key fields are missing
+    key_fields = [
+        form_data.get("Project Name"),
+        form_data.get("What is the nature of your project?"),
+        form_data.get("Space(S) to be designed")
+    ]
+    
+    missing_key_fields = sum(1 for field in key_fields if not field)
+    
+    print(f"📊 PPT Decision Analysis:")
+    print(f"   Total images: {total_images}")
+    print(f"   Missing key fields: {missing_key_fields}")
+    
+    # Create short PPT if:
+    # 1. Very few images (less than 3)
+    # 2. OR missing multiple key fields (more than 1)
+    should_create_short = total_images < 3 or missing_key_fields > 1
+    
+    print(f"   Decision: {'SHORT' if should_create_short else 'FULL'} PPT")
+    return should_create_short
+
 
 @app.post("/monday-webhook")
 async def monday_webhook(request: Request):
     body = await request.json()
+    
     if "challenge" in body:
         return JSONResponse(content={"challenge": body["challenge"]})
     
@@ -692,17 +749,17 @@ async def monday_webhook(request: Request):
         # Map webhook data to form format
         form_data = map_webhook_to_form(event)
         
-        # Debug: Print all column values to understand the structure
+        # Debug: Print all column values
         col_vals = event.get("columnValues", {})
         print("🔍 DEBUG: All column values:")
         for key, value in col_vals.items():
             print(f"  {key}: {value}")
         
-        # Extract styles from form_data
+        # Extract styles
         selected_styles = form_data.get("selected_styles", [])
         print(f"🎨 Selected styles: {selected_styles}")
         
-        # Get style images from local styleGuide folder
+        # Get style images
         style_images = get_style_images(selected_styles)
         print(f"🎨 Style images found: {style_images}")
         
@@ -728,42 +785,50 @@ async def monday_webhook(request: Request):
             if qd.get("residential_type"):
                 form_data["What is the nature of your project?"] = qd["residential_type"]
 
-        # Categorize and collect all images from Monday.com (excluding styles)
+        # Categorize & collect images (excluding styles)
         categorized_images = categorize_and_collect_images(event)
-        
-        # Print the categorized images in the requested format
         print("📸 Categorized Images (without styles):")
         print(json.dumps(categorized_images, indent=2))
         
-        # Step 1: Replace text placeholders in PPT
-        # Remove style-related keys from form_data for text replacement to avoid conflicts
+        # 🆕 Decide if short PPT is needed
+        create_short = should_create_short_ppt(form_data, categorized_images)
+
+        # Always generate SHORT PPT
+        print("📄 Creating SHORT PPT...")
+        short_output = create_short_ppt(BTEMPLATE_PATH, BOUTPUT_PATH, form_data)
+        print(f"✅ Short PPT generated: {short_output}")
+
+        # Always generate FULL PPT
+        print("📄 Creating FULL PPT...")
         form_data_for_text = {k: v for k, v in form_data.items() if k not in ["selected_styles"]}
         replace_text_in_ppt(TEMPLATE_PATH, OUTPUT_PATH, form_data_for_text)
-        print("✅ Text placeholders replaced in PPT")
-
-        # Step 2: Replace STYLE placeholders FIRST (before other images)
         if style_images:
             replace_style_placeholders(OUTPUT_PATH, OUTPUT_PATH, style_images)
             print("🎨 Style placeholders replaced in PPT")
-        else:
-            print("⚠️ No style images to replace")
-
-        # Step 3: Replace other image placeholders with actual images
         replace_placeholders_with_images(OUTPUT_PATH, OUTPUT_PATH, categorized_images)
-        print("✅ Other image placeholders replaced in PPT")
-        
-        # Optional: Send email with the generated PPT
+        print("✅ Full PPT generated")
+
+        # (Optional) email sending
         try:
-            # Uncomment the line below if you want to send email
+            # send_email_with_ppt(email, short_output, form_data)
             # send_email_with_ppt(email, OUTPUT_PATH, form_data)
-            print(f"📧 PPT ready to be sent to: {email}")
+            print(f"📧 PPTs ready to be sent to: {email}")
         except Exception as e:
             print(f"⚠️ Failed to send email: {e}")
-        
-        # Return response with categorized images and processing status
+
+        # Return both
         return {
-            "status": "success", 
-            "message": "PPT generated successfully",
+            "status": "success",
+            "message": "Both PPTs generated successfully",
+            "decision_short_required": create_short,
+            "short_ppt": {
+                "file": short_output,
+                "template": BTEMPLATE_PATH
+            },
+            "full_ppt": {
+                "file": OUTPUT_PATH,
+                "template": TEMPLATE_PATH
+            },
             "categorized_images": categorized_images,
             "styles_processed": selected_styles,
             "style_images_found": len(style_images),
