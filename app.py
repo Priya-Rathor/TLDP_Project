@@ -12,7 +12,7 @@ from pptx.util import Inches
 
 app = FastAPI()
 
-TEMPLATE_PATH ="template3.pptx"
+TEMPLATE_PATH ="template.pptx"
 BTEMPLATE_PATH="btemplate.pptx"
 OUTPUT_PATH = "output.pptx"
 BOUTPUT_PATH = "Boutput.pptx"
