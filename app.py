@@ -9,6 +9,8 @@ from docx import Document
 import fitz  # PyMuPDF
 from zipfile import ZipFile
 from pptx.util import Inches
+from brochure import create_brochure_ppt
+
 
 app = FastAPI()
 
@@ -19,6 +21,11 @@ BOUTPUT_PATH = "Boutput.pptx"
 MONDAY_API_KEY = os.getenv("MONDAY_API_KEY", "eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjU0NjI5MjM1NywiYWFpIjoxMSwidWlkIjo3NDc3Njk5NywiaWFkIjoiMjAyNS0wOC0wNFQwOTo0MzowNS4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6MTIxNDMyMDQsInJnbiI6InVzZTEifQ.yYeelRXHOZlaxwYHBAvi6eXRzD2fNn1H-jX-Pd8Ukcw")
 MONDAY_API_URL = "https://api.monday.com/v2"
 STYLE_FOLDER = "styleGuide"
+
+
+
+
+
 
 def get_file_download_url(asset_id: int) -> str:
     """
@@ -244,32 +251,6 @@ def fetch_user_details(email: str):
         print("Error fetching user details:", e)
     return {}
 
-def create_short_ppt(template_path: str, output_path: str, form_data: dict):
-    """
-    Generate a short PPT with only limited fields.
-    """
-    print(f"🔄 Creating short PPT using template: {template_path}")
-    
-    # ✅ Build only required text mapping (removed image mappings)
-    text_map = {
-        "Project Name": form_data.get("Project Name", ""),
-        "Project Type": form_data.get("What is the nature of your project?", ""),
-        "space To be Designed": form_data.get("Space(S) to be designed", ""),
-        "Room size": form_data.get("What is the area size?", ""),
-        "style(s) selected": form_data.get("Which style(s) do you like?", ""),
-        "Location": f"{form_data.get('City', '')}, {form_data.get('Country', '')}",
-    }
-
-    # Clean up empty values
-    text_map = {k: v for k, v in text_map.items() if v}
-    
-    print(f"📝 Text mappings for short PPT: {text_map}")
-
-    # ✅ Generate PPT (only text replacement)
-    replace_text_in_ppt(template_path, output_path, text_map)
-
-    print(f"✅ Short PPT generated: {output_path}")
-    return output_path
 
 def get_item_files(item_id: int):
     """
@@ -705,40 +686,12 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
     print(f"💾 Saved updated presentation to {output_path}")
     return output_path
 
-def should_create_short_ppt(form_data: dict, categorized_images: dict) -> bool:
-    """
-    Determine if a short PPT should be created instead of full PPT.
-    Returns True if there are insufficient images or data for a full presentation.
-    """
-    # Count total images available
-    total_images = sum(len(images) for images in categorized_images.values())
-    
-    # Check if key fields are missing
-    key_fields = [
-        form_data.get("Project Name"),
-        form_data.get("What is the nature of your project?"),
-        form_data.get("Space(S) to be designed")
-    ]
-    
-    missing_key_fields = sum(1 for field in key_fields if not field)
-    
-    print(f"📊 PPT Decision Analysis:")
-    print(f"   Total images: {total_images}")
-    print(f"   Missing key fields: {missing_key_fields}")
-    
-    # Create short PPT if:
-    # 1. Very few images (less than 3)
-    # 2. OR missing multiple key fields (more than 1)
-    should_create_short = total_images < 3 or missing_key_fields > 1
-    
-    print(f"   Decision: {'SHORT' if should_create_short else 'FULL'} PPT")
-    return should_create_short
+
 
 
 @app.post("/monday-webhook")
 async def monday_webhook(request: Request):
     body = await request.json()
-    
     if "challenge" in body:
         return JSONResponse(content={"challenge": body["challenge"]})
     
@@ -746,24 +699,15 @@ async def monday_webhook(request: Request):
         event = body["event"]
         item_id = event.get("pulseId")
         
-        # Map webhook data to form format
+        # --- Step 1: Map webhook data ---
         form_data = map_webhook_to_form(event)
-        
-        # Debug: Print all column values
         col_vals = event.get("columnValues", {})
-        print("🔍 DEBUG: All column values:")
-        for key, value in col_vals.items():
-            print(f"  {key}: {value}")
         
-        # Extract styles
+        # --- Step 2: Extract styles ---
         selected_styles = form_data.get("selected_styles", [])
-        print(f"🎨 Selected styles: {selected_styles}")
-        
-        # Get style images
         style_images = get_style_images(selected_styles)
-        print(f"🎨 Style images found: {style_images}")
         
-        # Email extraction
+        # --- Step 3: Extract email ---
         email = None
         if "email" in col_vals:
             email_block = col_vals["email"]
@@ -772,7 +716,7 @@ async def monday_webhook(request: Request):
         if not email:
             email = form_data.get("Email") or form_data.get("email") or "krgarav@gmail.com"
 
-        # Fetch extra details
+        # --- Step 4: Fetch extra details ---
         user_details = fetch_user_details(email)
         if user_details.get("status") == "success":
             qd = user_details["data"][0]["quotationdetails"]
@@ -785,56 +729,85 @@ async def monday_webhook(request: Request):
             if qd.get("residential_type"):
                 form_data["What is the nature of your project?"] = qd["residential_type"]
 
-        # Categorize & collect images (excluding styles)
+        # --- Step 5: Categorize images ---
         categorized_images = categorize_and_collect_images(event)
-        print("📸 Categorized Images (without styles):")
-        print(json.dumps(categorized_images, indent=2))
+
+        results = {}
+
         
-        # 🆕 Decide if short PPT is needed
-        create_short = should_create_short_ppt(form_data, categorized_images)
-
-        # Always generate SHORT PPT
-        print("📄 Creating SHORT PPT...")
-        short_output = create_short_ppt(BTEMPLATE_PATH, BOUTPUT_PATH, form_data)
-        print(f"✅ Short PPT generated: {short_output}")
-
-        # Always generate FULL PPT
-        print("📄 Creating FULL PPT...")
-        form_data_for_text = {k: v for k, v in form_data.items() if k not in ["selected_styles"]}
-        replace_text_in_ppt(TEMPLATE_PATH, OUTPUT_PATH, form_data_for_text)
-        if style_images:
-            replace_style_placeholders(OUTPUT_PATH, OUTPUT_PATH, style_images)
-            print("🎨 Style placeholders replaced in PPT")
-        replace_placeholders_with_images(OUTPUT_PATH, OUTPUT_PATH, categorized_images)
-        print("✅ Full PPT generated")
-
-        # (Optional) email sending
+        # ======================
+        # 3) Generate BROCHURE PPT
+        # ======================
         try:
-            # send_email_with_ppt(email, short_output, form_data)
-            # send_email_with_ppt(email, OUTPUT_PATH, form_data)
-            print(f"📧 PPTs ready to be sent to: {email}")
-        except Exception as e:
-            print(f"⚠️ Failed to send email: {e}")
+            # Smart picking of images
+            circle_img = style_images[0] if style_images else (categorized_images.get("existing_pictures") or [None])[0]
+            calendar_bg = (categorized_images.get("existing_pictures") or [None])[0]  # use any existing picture
+            layout_img = (categorized_images.get("floor_plans") or [None])[0]  # use floor plan as layout
+            layout_bg = (categorized_images.get("existing_pictures") or [None])[1] if len(categorized_images.get("existing_pictures", [])) > 1 else calendar_bg
+            extra_images = style_images or categorized_images.get("existing_pictures", [])
 
-        # Return both
+            brochure_ppt = create_brochure_ppt(
+                BTEMPLATE_PATH,
+                BOUTPUT_PATH.replace(".pptx", f"_{item_id}_brochure.pptx"),
+                form_data=form_data,
+                circle_img=circle_img,
+                calendar_bg=calendar_bg,
+                layout_img=layout_img,
+                layout_bg=layout_bg,
+                extra_images=extra_images
+            )
+
+            results["brochure"] = {
+                "output_file": brochure_ppt,
+                "ppt_type": "brochure",
+                "styles_processed": selected_styles,
+                "style_images_found": len(style_images),
+                "email": email,
+                "project_name": form_data.get("Project Name", "Unknown")
+            }
+
+            print(f"✅ Brochure PPT created: {brochure_ppt}")
+            # Optional email
+            # send_email_with_ppt(email, brochure_ppt, form_data)
+
+        except Exception as e:
+            print(f"⚠️ Failed to create brochure PPT: {e}")
+            results["brochure"] = {"error": str(e)}
+
+        
+
+        # ======================
+        # 2) Generate FULL PPT
+        # ======================
+        try:
+            form_data_for_text = {k: v for k, v in form_data.items() if k not in ["selected_styles"]}
+            replace_text_in_ppt(TEMPLATE_PATH, OUTPUT_PATH, form_data_for_text)
+
+            if style_images:
+                replace_style_placeholders(OUTPUT_PATH, OUTPUT_PATH, style_images)
+
+            replace_placeholders_with_images(OUTPUT_PATH, OUTPUT_PATH, categorized_images)
+
+            results["full"] = {
+                "output_file": OUTPUT_PATH,
+                "ppt_type": "full",
+                "styles_processed": selected_styles,
+                "style_images_found": len(style_images),
+                "categorized_images": categorized_images,
+                "email": email,
+                "project_name": form_data.get("Project Name", "Unknown")
+            }
+            print(f"✅ Full PPT created: {OUTPUT_PATH}")
+            # Optional: send email
+            # send_email_with_ppt(email, OUTPUT_PATH, form_data)
+        except Exception as e:
+            print(f"⚠️ Failed to create full PPT: {e}")
+            results["full"] = {"error": str(e)}
+
         return {
             "status": "success",
-            "message": "Both PPTs generated successfully",
-            "decision_short_required": create_short,
-            "short_ppt": {
-                "file": short_output,
-                "template": BTEMPLATE_PATH
-            },
-            "full_ppt": {
-                "file": OUTPUT_PATH,
-                "template": TEMPLATE_PATH
-            },
-            "categorized_images": categorized_images,
-            "styles_processed": selected_styles,
-            "style_images_found": len(style_images),
-            "style_images": style_images,
-            "email": email,
-            "project_name": form_data.get("Project Name", "Unknown")
+            "message": "Both PPTs processed",
+            "results": results
         }
 
     return {"status": "ok", "message": "Webhook received but no event data"}
