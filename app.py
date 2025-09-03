@@ -617,7 +617,11 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
             if not shape.has_text_frame:
                 continue
 
-            text = shape.text.strip()
+            if shape.has_text_frame:
+                text = "".join(r.text for p in shape.text_frame.paragraphs for r in p.runs).strip()
+            else:
+                text = shape.text.strip()
+                
 
             # Match placeholders like {{CategoryN}} but EXCLUDE style placeholders
             match = re.match(r"\{\{(\w+)(\d+)\}\}", text)
@@ -673,6 +677,7 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
     prs.save(output_path)
     print(f"💾 Saved updated presentation to {output_path}")
     return output_path
+
 
 @app.post("/monday-webhook")
 async def monday_webhook(request: Request):
