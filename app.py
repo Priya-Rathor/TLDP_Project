@@ -20,8 +20,6 @@ MONDAY_API_KEY = os.getenv("MONDAY_API_KEY", "eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjU0N
 MONDAY_API_URL = "https://api.monday.com/v2"
 STYLE_FOLDER = "styleGuide"
 
-
-
 def get_file_download_url(asset_id: int) -> str:
     """
     Get the actual downloadable S3 URL for a Monday.com file using the API
@@ -108,17 +106,21 @@ def normalize_style_name(style_name: str) -> str:
     return clean
 
 def get_style_images(selected_styles):
-    style_images = {}
+    """
+    Match selected style names with images in STYLE_FOLDER.
+    Returns a list of image paths for the Style category
+    """
+    style_images = []
     if not selected_styles:
         return style_images
 
-    for i, style in enumerate(selected_styles, start=1):
+    for style in selected_styles:
         normalized = normalize_style_name(style)
         for ext in [".jpg", ".jpeg", ".png"]:
             filename = f"{normalized}{ext}"       
             path = os.path.join(STYLE_FOLDER, filename)
             if os.path.exists(path):
-                style_images[f"{{{{style{i}}}}}"] = path
+                style_images.append(path)
                 print(f"🎨 Style matched: {style} -> {path}")
                 break
         else:
@@ -138,81 +140,99 @@ def map_webhook_to_form(event: dict):
         except Exception:
             image_urls = []
 
+    # Extract style information from dropdown column
+    styles = []
+    # Check different possible dropdown column names for styles
+    style_columns = ["dropdown", "dropdown0", "dropdown1", "dropdown2", "style_dropdown"]
+    
+    for col_name in style_columns:
+        if col_name in col and col[col_name].get("chosenValues"):
+            chosen_values = col[col_name].get("chosenValues", [])
+            styles = [v.get("name", "") for v in chosen_values if v.get("name")]
+            if styles:
+                print(f"🎨 Found styles in column '{col_name}': {styles}")
+                break
+
     return {
-    # --- Project Information ---
-    "Project Name": event.get("pulseName"),
-    "**Project Name**": event.get("pulseName"),
-    "project name": event.get("pulseName"),
+        # --- Project Information ---
+        "Project Name": event.get("pulseName"),
+        "**Project Name**": event.get("pulseName"),
+        "project name": event.get("pulseName"),
 
-    "What is the nature of your project?": col.get("status1", {}).get("label", {}).get("text"),
-    "what is the nature of your project?": col.get("status1", {}).get("label", {}).get("text"),
+        "What is the nature of your project?": col.get("status1", {}).get("label", {}).get("text"),
+        "what is the nature of your project?": col.get("status1", {}).get("label", {}).get("text"),
 
-    "What is the property type?": col.get("dropdown76", {}).get("chosenValues", [{}])[0].get("name"),
-    "what is the property type?": col.get("dropdown76", {}).get("chosenValues", [{}])[0].get("name"),
+        "What is the property type?": col.get("dropdown76", {}).get("chosenValues", [{}])[0].get("name"),
+        "what is the property type?": col.get("dropdown76", {}).get("chosenValues", [{}])[0].get("name"),
 
-    "City": col.get("text8", {}).get("value"),
-    "city": col.get("text8", {}).get("value"),
+        "City": col.get("text8", {}).get("value"),
+        "city": col.get("text8", {}).get("value"),
 
-    "Country": col.get("country6", {}).get("countryName"),
-    "country": col.get("country6", {}).get("countryName"),
+        "Country": col.get("country6", {}).get("countryName"),
+        "country": col.get("country6", {}).get("countryName"),
 
-    "Space(S) to be designed": ", ".join([v.get("name", "") for v in col.get("dropdown0", {}).get("chosenValues", [])]),
-    "space(s) to be designed": ", ".join([v.get("name", "") for v in col.get("dropdown0", {}).get("chosenValues", [])]),
+        "Space(S) to be designed": ", ".join([v.get("name", "") for v in col.get("dropdown0", {}).get("chosenValues", [])]),
+        "space(s) to be designed": ", ".join([v.get("name", "") for v in col.get("dropdown0", {}).get("chosenValues", [])]),
 
-    "What is the area size?": col.get("short_text8fr4spel", {}).get("value"),
-    "what is the area size?": col.get("short_text8fr4spel", {}).get("value"),
+        "What is the area size?": col.get("short_text8fr4spel", {}).get("value"),
+        "what is the area size?": col.get("short_text8fr4spel", {}).get("value"),
 
-    # --- Client Information ---
-    "How old are you?": col.get("status", {}).get("label", {}).get("text"),
-    "how old are you?": col.get("status", {}).get("label", {}).get("text"),
-    "{{How old are you?}}": col.get("status", {}).get("label", {}).get("text"),
-    "{{how old are you?}}": col.get("status", {}).get("label", {}).get("text"),
+        # --- Style Information ---
+        "Which style(s) do you like?": ", ".join(styles) if styles else "",
+        "which style(s) do you like?": ", ".join(styles) if styles else "",
+        "selected_styles": styles,  # Raw list for processing
 
-    "How many people will live in the space?": col.get("text1", {}).get("value"),
-    "how many people will live in the space?": col.get("text1", {}).get("value"),
-    "{{How many people will live in the space?}}": col.get("text1", {}).get("value"),
-    "{{how many people will live in the space?}}": col.get("text1", {}).get("value"),
+        # --- Client Information ---
+        "How old are you?": col.get("status", {}).get("label", {}).get("text"),
+        "how old are you?": col.get("status", {}).get("label", {}).get("text"),
+        "{{How old are you?}}": col.get("status", {}).get("label", {}).get("text"),
+        "{{how old are you?}}": col.get("status", {}).get("label", {}).get("text"),
 
-    "What best describes your situation?": col.get("single_selecti4d0sw1", {}).get("label", {}).get("text"),
-    "what best describes your situation?": col.get("single_selecti4d0sw1", {}).get("label", {}).get("text"),
-    "{{What best describes your situation?}}": col.get("single_selecti4d0sw1", {}).get("label", {}).get("text"),
-    "{{what best describes your situation?}}": col.get("single_selecti4d0sw1", {}).get("label", {}).get("text"),
+        "How many people will live in the space?": col.get("text1", {}).get("value"),
+        "how many people will live in the space?": col.get("text1", {}).get("value"),
+        "{{How many people will live in the space?}}": col.get("text1", {}).get("value"),
+        "{{how many people will live in the space?}}": col.get("text1", {}).get("value"),
 
-    "Do you have any pets?": col.get("text_1", {}).get("value"),
-    "do you have any pets?": col.get("text_1", {}).get("value"),
-    "{{Do you have any pets?}}": col.get("text_1", {}).get("value"),
-    "{{do you have any pets?}}": col.get("text_1", {}).get("value"),
+        "What best describes your situation?": col.get("single_selecti4d0sw1", {}).get("label", {}).get("text"),
+        "what best describes your situation?": col.get("single_selecti4d0sw1", {}).get("label", {}).get("text"),
+        "{{What best describes your situation?}}": col.get("single_selecti4d0sw1", {}).get("label", {}).get("text"),
+        "{{what best describes your situation?}}": col.get("single_selecti4d0sw1", {}).get("label", {}).get("text"),
 
-    "Please describe the scope of work": col.get("text37", {}).get("value"),
-    "please describe the scope of work": col.get("text37", {}).get("value"),
-    "{{Please describe the scope of work}}": col.get("text37", {}).get("value"),
-    "{{please describe the scope of work}}": col.get("text37", {}).get("value"),
+        "Do you have any pets?": col.get("text_1", {}).get("value"),
+        "do you have any pets?": col.get("text_1", {}).get("value"),
+        "{{Do you have any pets?}}": col.get("text_1", {}).get("value"),
+        "{{do you have any pets?}}": col.get("text_1", {}).get("value"),
 
-    # --- Other Information ---
-    "Is there any other information you'd like us to know?": col.get("long_text3", {}).get("text"),
-    "is there any other information you'd like us to know?": col.get("long_text3", {}).get("text"),
-    "is there any other information you'd like us to know": col.get("long_text3", {}).get("text"),
-    "{{Is there any other information you'd like us to know?}}": col.get("long_text3", {}).get("text"),
-    "{{is there any other information you'd like us to know?}}": col.get("long_text3", {}).get("text"),
-    "{{is there any other information you'd like us to know}}": col.get("long_text3", {}).get("text"),
-    "Is there any other information you'd like us to know": col.get("long_text3", {}).get("text"),
-    "other information you'd like us to know": col.get("long_text3", {}).get("text"),
-    "other information": col.get("long_text3", {}).get("text"),
+        "Please describe the scope of work": col.get("text37", {}).get("value"),
+        "please describe the scope of work": col.get("text37", {}).get("value"),
+        "{{Please describe the scope of work}}": col.get("text37", {}).get("value"),
+        "{{please describe the scope of work}}": col.get("text37", {}).get("value"),
 
-    # --- Words describe ---
-    "Words Describe the feel for space?": col.get("short_text5fonuzuu", {}).get("value"),
-    "words describe the feel for space?": col.get("short_text5fonuzuu", {}).get("value"),
-    "words describe the feel for space": col.get("short_text5fonuzuu", {}).get("value"),
-    "**Words Describe the feel for space?**": col.get("short_text5fonuzuu", {}).get("value"),
-    "**words describe the feel for space?**": col.get("short_text5fonuzuu", {}).get("value"),
-    "**{{ Words Describe the feel for space? }}**": col.get("short_text5fonuzuu", {}).get("value"),
-    "{{ Words Describe the feel for space? }}": col.get("short_text5fonuzuu", {}).get("value"),
-    "{{Words Describe the feel for space?}}": col.get("short_text5fonuzuu", {}).get("value"),
-    "{{words describe the feel for space?}}": col.get("short_text5fonuzuu", {}).get("value"),
-    "{{words describe the feel for space}}": col.get("short_text5fonuzuu", {}).get("value"),
-    "Words Describe the feel for space": col.get("short_text5fonuzuu", {}).get("value"),
-    "words describe the feel for space": col.get("short_text5fonuzuu", {}).get("value"),
-}
+        # --- Other Information ---
+        "Is there any other information you'd like us to know?": col.get("long_text3", {}).get("text"),
+        "is there any other information you'd like us to know?": col.get("long_text3", {}).get("text"),
+        "is there any other information you'd like us to know": col.get("long_text3", {}).get("text"),
+        "{{Is there any other information you'd like us to know?}}": col.get("long_text3", {}).get("text"),
+        "{{is there any other information you'd like us to know?}}": col.get("long_text3", {}).get("text"),
+        "{{is there any other information you'd like us to know}}": col.get("long_text3", {}).get("text"),
+        "Is there any other information you'd like us to know": col.get("long_text3", {}).get("text"),
+        "other information you'd like us to know": col.get("long_text3", {}).get("text"),
+        "other information": col.get("long_text3", {}).get("text"),
+
+        # --- Words describe ---
+        "Words Describe the feel for space?": col.get("short_text5fonuzuu", {}).get("value"),
+        "words describe the feel for space?": col.get("short_text5fonuzuu", {}).get("value"),
+        "words describe the feel for space": col.get("short_text5fonuzuu", {}).get("value"),
+        "**Words Describe the feel for space?**": col.get("short_text5fonuzuu", {}).get("value"),
+        "**words describe the feel for space?**": col.get("short_text5fonuzuu", {}).get("value"),
+        "**{{ Words Describe the feel for space? }}**": col.get("short_text5fonuzuu", {}).get("value"),
+        "{{ Words Describe the feel for space? }}": col.get("short_text5fonuzuu", {}).get("value"),
+        "{{Words Describe the feel for space?}}": col.get("short_text5fonuzuu", {}).get("value"),
+        "{{words describe the feel for space?}}": col.get("short_text5fonuzuu", {}).get("value"),
+        "{{words describe the feel for space}}": col.get("short_text5fonuzuu", {}).get("value"),
+        "Words Describe the feel for space": col.get("short_text5fonuzuu", {}).get("value"),
+        "words describe the feel for space": col.get("short_text5fonuzuu", {}).get("value"),
+    }
 
 def fetch_user_details(email: str):
     try:
@@ -304,6 +324,7 @@ def get_item_files(item_id: int):
             })
     
     return result
+
 def replace_text_in_ppt(template_path: str, output_path: str, text_map: dict):
     """
     Replace only text placeholders in PPT (no image insertion)
@@ -435,8 +456,6 @@ def categorize_and_collect_images(event: dict) -> dict:
 
     return categorized_images
 
-
-# Also, let's improve the get_file_download_url function for better error handling
 def get_file_download_url(asset_id: int) -> str:
     """
     Get the actual downloadable S3 URL for a Monday.com file using the API
@@ -487,12 +506,6 @@ def get_file_download_url(asset_id: int) -> str:
         print(f"⚠️ Failed to get URL for asset {asset_id}: {e}")
         return None
 
-
-
-
-
-
-
 from pptx.oxml.ns import qn
 
 def delete_slide(prs, slide):
@@ -519,22 +532,79 @@ def delete_slide(prs, slide):
     if slide_rel_id and slide_rel_id in prs.part.rels:
         prs.part.drop_rel(slide_rel_id)
 
+def replace_style_placeholders(pptx_path, output_path, style_images):
+    """
+    NEW FUNCTION: Replace style placeholders like {{style1}}, {{style2}}, etc. with style images.
+    This function runs BEFORE the main image replacement function.
+    """
+    prs = Presentation(pptx_path)
+    slides_to_delete = []
+
+    print(f"🎨 Starting style placeholder replacement with {len(style_images)} style images")
+
+    for slide_idx, slide in enumerate(prs.slides):
+        replaced_any = False
+        found_style_placeholder = False
+
+        for shape in list(slide.shapes):
+            if not shape.has_text_frame:
+                continue
+
+            text = shape.text.strip()
+            
+            # Match style placeholders like {{style1}}, {{style2}}, etc. (case-insensitive)
+            match = re.match(r"\{\{style(\d+)\}\}", text, re.IGNORECASE)
+            if not match:
+                continue
+
+            found_style_placeholder = True
+            style_num = int(match.group(1)) - 1  # Convert to 0-based index
+
+            if style_num < len(style_images):
+                img_path = style_images[style_num]
+                print(f"🎨 Replacing {text} with style image: {img_path}")
+
+                try:
+                    # Replace placeholder with style image
+                    left, top, width, height = shape.left, shape.top, shape.width, shape.height
+                    sp = shape._element
+                    sp.getparent().remove(sp)
+                    slide.shapes.add_picture(img_path, left, top, width, height)
+                    replaced_any = True
+                    
+                except Exception as e:
+                    print(f"⚠️ Failed to insert style image {img_path}: {e}")
+            else:
+                print(f"⚠️ No style image available for {text} (index {style_num}, available: {len(style_images)})")
+
+        # Mark slide for deletion if it had style placeholders but no replacement and no pictures
+        if found_style_placeholder and not replaced_any:
+            has_pictures = any(shape.shape_type == 13 for shape in slide.shapes)  # 13 = picture
+            if not has_pictures:
+                print(f"🗑️ Marking slide {slide_idx+1} for deletion (no style images found)")
+                slides_to_delete.append(slide)
+
+    # Delete marked slides
+    for slide in slides_to_delete:
+        delete_slide(prs, slide)
+
+    prs.save(output_path)
+    print(f"🎨 Style placeholder replacement complete. Saved to {output_path}")
+    return output_path
 
 def replace_placeholders_with_images(pptx_path, output_path, categorized_images):
     """
-    Replace placeholders like {{Image1}}, {{Layout2}}, {{Elevation1}}, {{Inspiration1}}, {{Existing1}}, {{Style1}}
-    with categorized images.
-    If no image is found for any placeholder and no images remain in the slide, delete the slide.
+    Replace placeholders like {{Image1}}, {{Layout2}}, {{Elevation1}}, {{Inspiration1}} 
+    with categorized images (excludes style placeholders as they're handled separately).
     """
     prs = Presentation(pptx_path)
 
-    # ✅ Build category mapping (added Style)
+    # ✅ Build category mapping (REMOVED Style from here)
     category_map = {
         "Layout": categorized_images.get("floor_plans", []),
         "Elevation": categorized_images.get("elevation_drawings", []),
         "Inspiration": categorized_images.get("inspiration_images", []),
         "Image": categorized_images.get("existing_pictures", []),
-        "Style": categorized_images.get("style_images", []),   # NEW
     }
 
     slides_to_delete = []
@@ -549,13 +619,18 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
 
             text = shape.text.strip()
 
-            # Match placeholders like {{CategoryN}}
+            # Match placeholders like {{CategoryN}} but EXCLUDE style placeholders
             match = re.match(r"\{\{(\w+)(\d+)\}\}", text)
             if not match:
                 continue
 
-            found_placeholder = True
             category, num = match.group(1), int(match.group(2)) - 1
+            
+            # Skip style placeholders (they're handled separately)
+            if category.lower() == "style":
+                continue
+
+            found_placeholder = True
             images = category_map.get(category)
 
             if images and num < len(images):
@@ -599,75 +674,34 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
     print(f"💾 Saved updated presentation to {output_path}")
     return output_path
 
-
-def replace_style_images(pptx_path, output_path, style_images):
-    prs = Presentation(pptx_path)
-
-    for slide in prs.slides[:]:  # iterate over slides
-        replaced_any = False
-        found_placeholder = False
-
-        for shape in slide.shapes:
-            if not shape.has_text_frame:
-                continue
-
-            text = shape.text.strip()
-            match = re.match(r"\{Style(\d+)\}", text)
-            if not match:
-                continue
-
-            found_placeholder = True
-            num = int(match.group(1)) - 1
-
-            if num < len(style_images):
-                img_path = style_images[num]
-                print(f"✅ Replacing {text} with {img_path}")
-
-                left, top, width, height = shape.left, shape.top, shape.width, shape.height
-                sp = shape._element
-                sp.getparent().remove(sp)
-
-                slide.shapes.add_picture(img_path, left, top, width, height)
-                replaced_any = True
-            else:
-                print(f"⚠️ No style image available for {text}, slide will be deleted")
-
-        # If placeholder found but no image replaced → delete slide
-        if found_placeholder and not replaced_any:
-            rId = slide._element.getparent().getparent().getparent().get("r:id")
-            slides_part = prs.slides.part
-            slides_part.drop_rel(rId)
-            prs.slides._sldIdLst.remove(slide._element)
-
-    prs.save(output_path)
-
-
-
 @app.post("/monday-webhook")
 async def monday_webhook(request: Request):
     body = await request.json()
     if "challenge" in body:
         return JSONResponse(content={"challenge": body["challenge"]})
+    
     if "event" in body:
         event = body["event"]
         item_id = event.get("pulseId")
+        
+        # Map webhook data to form format
         form_data = map_webhook_to_form(event)
-
-        # --- Style Images ---
-        styles_raw = []
+        
+        # Debug: Print all column values to understand the structure
         col_vals = event.get("columnValues", {})
-        for key, val in col_vals.items():
-           if isinstance(val, dict) and val.get("type") == "dropdown":
-             chosen = val.get("chosenValues", [])
-             for c in chosen:
-                 if "name" in c:
-                     styles_raw.append(c["name"])
-
-# 🎨 Map style images
-        if styles_raw:
-          form_data.update(get_style_images(styles_raw))
-          form_data["Which style(s) do you like?"] = ", ".join(styles_raw)
-        # --- Email Extraction ---
+        print("🔍 DEBUG: All column values:")
+        for key, value in col_vals.items():
+            print(f"  {key}: {value}")
+        
+        # Extract styles from form_data
+        selected_styles = form_data.get("selected_styles", [])
+        print(f"🎨 Selected styles: {selected_styles}")
+        
+        # Get style images from local styleGuide folder
+        style_images = get_style_images(selected_styles)
+        print(f"🎨 Style images found: {style_images}")
+        
+        # Email extraction
         email = None
         if "email" in col_vals:
             email_block = col_vals["email"]
@@ -676,7 +710,7 @@ async def monday_webhook(request: Request):
         if not email:
             email = form_data.get("Email") or form_data.get("email") or "krgarav@gmail.com"
 
-        # --- Fetch extra details ---
+        # Fetch extra details
         user_details = fetch_user_details(email)
         if user_details.get("status") == "success":
             qd = user_details["data"][0]["quotationdetails"]
@@ -689,25 +723,48 @@ async def monday_webhook(request: Request):
             if qd.get("residential_type"):
                 form_data["What is the nature of your project?"] = qd["residential_type"]
 
-        # --- Categorize and collect all images ---
+        # Categorize and collect all images from Monday.com (excluding styles)
         categorized_images = categorize_and_collect_images(event)
         
         # Print the categorized images in the requested format
-        print("📸 Categorized Images:")
+        print("📸 Categorized Images (without styles):")
         print(json.dumps(categorized_images, indent=2))
-        # --- Insert floor plans into PPT if available ---
-
-        # Step 1: Replace text placeholders
-        replace_text_in_ppt(TEMPLATE_PATH, OUTPUT_PATH, form_data)
-
-        # Step 2: Replace image placeholders (works on already text-updated PPT)
-        replace_placeholders_with_images(OUTPUT_PATH, OUTPUT_PATH, categorized_images)
-
-        # Step 3: Replace style placeholders
-        replace_style_images(OUTPUT_PATH, OUTPUT_PATH, get_style_images(styles_raw))
-
         
-        # Return response with categorized images
-        return {"status": "ok", "categorized_images": categorized_images}
+        # Step 1: Replace text placeholders in PPT
+        # Remove style-related keys from form_data for text replacement to avoid conflicts
+        form_data_for_text = {k: v for k, v in form_data.items() if k not in ["selected_styles"]}
+        replace_text_in_ppt(TEMPLATE_PATH, OUTPUT_PATH, form_data_for_text)
+        print("✅ Text placeholders replaced in PPT")
 
-    return {"status": "ok"}
+        # Step 2: Replace STYLE placeholders FIRST (before other images)
+        if style_images:
+            replace_style_placeholders(OUTPUT_PATH, OUTPUT_PATH, style_images)
+            print("🎨 Style placeholders replaced in PPT")
+        else:
+            print("⚠️ No style images to replace")
+
+        # Step 3: Replace other image placeholders with actual images
+        replace_placeholders_with_images(OUTPUT_PATH, OUTPUT_PATH, categorized_images)
+        print("✅ Other image placeholders replaced in PPT")
+        
+        # Optional: Send email with the generated PPT
+        try:
+            # Uncomment the line below if you want to send email
+            # send_email_with_ppt(email, OUTPUT_PATH, form_data)
+            print(f"📧 PPT ready to be sent to: {email}")
+        except Exception as e:
+            print(f"⚠️ Failed to send email: {e}")
+        
+        # Return response with categorized images and processing status
+        return {
+            "status": "success", 
+            "message": "PPT generated successfully",
+            "categorized_images": categorized_images,
+            "styles_processed": selected_styles,
+            "style_images_found": len(style_images),
+            "style_images": style_images,
+            "email": email,
+            "project_name": form_data.get("Project Name", "Unknown")
+        }
+
+    return {"status": "ok", "message": "Webhook received but no event data"}
