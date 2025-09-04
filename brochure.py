@@ -160,7 +160,8 @@ def replace_text_in_ppt(slide, text_map):
 # Main: Create Brochure
 # -------------------------
 def create_brochure_ppt(template_path, output_path, form_data,
-                        circle_img, calendar_bg, layout_img, layout_bg, extra_images):
+                        circle_img, calendar_bg, layout_img, layout_bg,
+                        categorized_images):
     """
     Create a brochure PPT with:
     1st Page  -> Replace text fields + circular cropped image
@@ -170,12 +171,35 @@ def create_brochure_ppt(template_path, output_path, form_data,
     print(f"🔄 Creating brochure PPT from {template_path}")
     prs = Presentation(template_path)
 
+    # Track temp files for cleanup
+    temp_files = []
+
     # Normalize images (URL → local)
     circle_img = get_local_image(circle_img, "circle.png")
+    if circle_img: temp_files.append(circle_img)
+
     calendar_bg = get_local_image(calendar_bg, "calendar_bg.png")
+    if calendar_bg: temp_files.append(calendar_bg)
+
     layout_img = get_local_image(layout_img, "layout_img.png")
+    if layout_img: temp_files.append(layout_img)
+
     layout_bg = get_local_image(layout_bg, "layout_bg.png")
-    extra_images = [get_local_image(img, f"extra_{i}.png") for i, img in enumerate(extra_images) if img]
+    if layout_bg: temp_files.append(layout_bg)
+
+    # ✅ Collect ALL category images (keep order)
+    all_images = (
+        categorized_images.get("existing_pictures", []) +
+        categorized_images.get("floor_plans", []) +
+        categorized_images.get("elevation_drawings", [])
+    )
+    # Normalize
+    extra_images = []
+    for i, img in enumerate(all_images):
+        local = get_local_image(img, f"extra_{i}.png")
+        if local:
+            extra_images.append(local)
+            temp_files.append(local)
 
     # -------------------------
     # 1️⃣ First Page
@@ -217,4 +241,16 @@ def create_brochure_ppt(template_path, output_path, form_data,
     # -------------------------
     prs.save(output_path)
     print(f"✅ Brochure PPT created: {output_path}")
+
+    # -------------------------
+    # 🧹 Cleanup temporary files
+    # -------------------------
+    for f in temp_files:
+        try:
+            if os.path.exists(f):
+                os.remove(f)
+                print(f"🗑️ Deleted temp file: {f}")
+        except Exception as e:
+            print(f"⚠️ Could not delete {f}: {e}")
+
     return output_path
