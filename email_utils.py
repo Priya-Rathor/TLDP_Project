@@ -5,9 +5,14 @@ from email.message import EmailMessage
 def send_email_with_ppt(recipient: str, subject: str, body: str, file_paths: list):
     """
     Send an email with one or more PPT attachments.
+    Includes better error handling and debug logs.
     """
     sender = os.getenv("EMAIL_USER", "divyanshi.pal.2408@gmail.com")
     password = os.getenv("EMAIL_PASSWORD", "llpd xolt lubx qqyc")
+
+    if not sender or not password:
+        print("❌ ERROR: Email credentials are missing. Set EMAIL_USER and EMAIL_PASSWORD.")
+        return False
 
     msg = EmailMessage()
     msg["From"] = sender
@@ -21,20 +26,33 @@ def send_email_with_ppt(recipient: str, subject: str, body: str, file_paths: lis
             print(f"⚠️ File not found, skipping: {file_path}")
             continue
 
-        with open(file_path, "rb") as f:
-            file_data = f.read()
-            file_name = os.path.basename(file_path)
-            msg.add_attachment(
-                file_data,
-                maintype="application",
-                subtype="vnd.openxmlformats-officedocument.presentationml.presentation",
-                filename=file_name
-            )
-            print(f"📎 Attached: {file_name}")
+        try:
+            with open(file_path, "rb") as f:
+                file_data = f.read()
+                file_name = os.path.basename(file_path)
+                msg.add_attachment(
+                    file_data,
+                    maintype="application",
+                    subtype="vnd.openxmlformats-officedocument.presentationml.presentation",
+                    filename=file_name
+                )
+                print(f"📎 Attached: {file_name}")
+        except Exception as e:
+            print(f"❌ Failed to attach {file_path}: {e}")
 
-    # Send using Gmail SMTP
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-        smtp.login(sender, password)
-        smtp.send_message(msg)
+    try:
+        print(f"📧 Connecting to Gmail SMTP as {sender}...")
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(sender, password)
+            smtp.send_message(msg)
+        print(f"✅ Email sent to {recipient} with {len(file_paths)} attachments")
+        return True
 
-    print(f"✅ Email sent to {recipient} with {len(file_paths)} attachments")
+    except smtplib.SMTPAuthenticationError:
+        print("❌ Authentication failed: Invalid email or password (check App Password settings).")
+    except smtplib.SMTPConnectError:
+        print("❌ Connection failed: Could not connect to Gmail SMTP server.")
+    except Exception as e:
+        print(f"❌ Unexpected error while sending email: {e}")
+
+    return False

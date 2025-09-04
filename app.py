@@ -10,6 +10,8 @@ import fitz  # PyMuPDF
 from zipfile import ZipFile
 from pptx.util import Inches
 from brochure import create_brochure_ppt
+from email_utils import send_email_with_ppt
+
 
 
 app = FastAPI()
@@ -669,7 +671,8 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
 
                 replaced_any = True
             else:
-                print(f"⚠️ No image available for {text}, placeholder kept")
+                print(f"⚠️ No image available for {text}, placeholder removed")
+                shape.text =""  # Clear placeholder if no image
 
         # ✅ If slide had placeholders but no replacement and no pictures → delete it
         if found_placeholder and not replaced_any:
@@ -692,6 +695,7 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
 @app.post("/monday-webhook")
 async def monday_webhook(request: Request):
     body = await request.json()
+    print("🚀 Webhook received:", json.dumps(body, indent=2))
     if "challenge" in body:
         return JSONResponse(content={"challenge": body["challenge"]})
     
@@ -720,8 +724,8 @@ async def monday_webhook(request: Request):
         user_details = fetch_user_details(email)
         if user_details.get("status") == "success":
             qd = user_details["data"][0]["quotationdetails"]
-            if qd.get("project_type"):
-                form_data["What is the property type?"] = qd["project_type"]
+           # if qd.get("project_type"):
+           #    form_data["What is the property type?"] = qd["project_type"]
             if qd.get("area_size"):
                 form_data["What is the area size?"] = qd["area_size"]
             if qd.get("project_name"):
@@ -809,11 +813,38 @@ async def monday_webhook(request: Request):
                 "project_name": form_data.get("Project Name", "Unknown")
             }
             print(f"✅ Full PPT created: {OUTPUT_PATH}")
-            # Optional: send email
-            send_email_with_ppt(email, OUTPUT_PATH, form_data)
+           
         except Exception as e:
             print(f"⚠️ Failed to create full PPT: {e}")
             results["full"] = {"error": str(e)}
+
+        #=====================
+        #  send email with both PPTs
+        #=====================
+        print("📧 Preparing to send email with PPTs...")
+     
+        subject = f"Your Project PPTs - {form_data.get('Project Name', 'Untitled Project')}"
+        body = (
+               "Hello,\n\n"
+               "Please find attached the generated brochure and style guide PPTs "
+               "for your project.\n\n"
+               "Best regards,\nDesign Team"
+            )
+
+        file_paths = [OUTPUT_PATH, BOUTPUT_PATH]
+
+       # Filter missing files (send only existing ones)
+        file_paths = [f for f in file_paths if os.path.exists(f)]
+
+        # ⚡ Force send only to client
+        recipient = "rathorpriya1718@gmail.com"
+        print(f"📦 Files ready for email: {file_paths}")
+        if file_paths:
+           send_email_with_ppt(recipient, subject, body, file_paths)
+           print(f"📧 Email sent to {recipient} with {len(file_paths)} attachment(s)")
+        else:
+          print("⚠️ No PPT files found to attach in email")
+
 
         return {
             "status": "success",
