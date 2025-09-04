@@ -90,6 +90,36 @@ def iter_shapes(shapes):
             yield from iter_shapes(shp.shapes)
 
 
+
+def fill_extra_images_in_slides(prs, extra_images, start_slide=3):
+    """
+    Fill extra images into slides 4–7 where placeholders {{imageX}} exist.
+    start_slide=3 because Python index starts at 0 (slide 4 in PPT).
+    """
+    img_index = 1
+    for slide_num in range(start_slide, min(len(prs.slides), start_slide + 4)):
+        slide = prs.slides[slide_num]
+        for shape in list(slide.shapes):
+            if hasattr(shape, "text"):
+                placeholder = f"{{{{image{img_index}}}}}"
+                if placeholder in shape.text and img_index <= len(extra_images):
+                    left, top, width, height = shape.left, shape.top, shape.width, shape.height
+                    slide.shapes._spTree.remove(shape._element)
+                    slide.shapes.add_picture(extra_images[img_index - 1], left, top, width, height)
+                    img_index += 1
+    return prs
+
+
+
+def cleanup_temp_files(files):
+    for f in files:
+        try:
+            if f and os.path.exists(f):
+                os.remove(f)
+        except Exception as e:
+            print(f"⚠️ Could not delete {f}: {e}")
+
+
 def update_calendar_with_bg(prs, slide, image_path, start_date=None):
     mapping = build_mapping(start_date)
     slide_width, slide_height = prs.slide_width, prs.slide_height
@@ -160,52 +190,21 @@ def replace_text_in_ppt(slide, text_map):
 # Main: Create Brochure
 # -------------------------
 def create_brochure_ppt(template_path, output_path, form_data,
-                        circle_img, calendar_bg, layout_img, layout_bg,
-                        categorized_images):
-    """
-    Create a brochure PPT with:
-    1st Page  -> Replace text fields + circular cropped image
-    2nd Page  -> Update calendar placeholders + set background
-    3rd Page  -> Replace {{Layout1}} + add background + append extra images
-    """
+                        circle_img, calendar_bg, layout_img, layout_bg, extra_images):
     print(f"🔄 Creating brochure PPT from {template_path}")
     prs = Presentation(template_path)
 
-    # Track temp files for cleanup
-    temp_files = []
-
     # Normalize images (URL → local)
-    circle_img = get_local_image(circle_img, "circle.png")
-    if circle_img: temp_files.append(circle_img)
+    temp_files = []
+    circle_img = get_local_image(circle_img, "circle.png"); temp_files.append(circle_img)
+    calendar_bg = get_local_image(calendar_bg, "calendar_bg.png"); temp_files.append(calendar_bg)
+    layout_img = get_local_image(layout_img, "layout_img.png"); temp_files.append(layout_img)
+    layout_bg = get_local_image(layout_bg, "layout_bg.png"); temp_files.append(layout_bg)
+    extra_images = [get_local_image(img, f"extra_{i}.png") for i, img in enumerate(extra_images) if img]
+    temp_files.extend(extra_images)
 
-    calendar_bg = get_local_image(calendar_bg, "calendar_bg.png")
-    if calendar_bg: temp_files.append(calendar_bg)
-
-    layout_img = get_local_image(layout_img, "layout_img.png")
-    if layout_img: temp_files.append(layout_img)
-
-    layout_bg = get_local_image(layout_bg, "layout_bg.png")
-    if layout_bg: temp_files.append(layout_bg)
-
-    # ✅ Collect ALL category images (keep order)
-    all_images = (
-        categorized_images.get("existing_pictures", []) +
-        categorized_images.get("floor_plans", []) +
-        categorized_images.get("elevation_drawings", [])
-    )
-    # Normalize
-    extra_images = []
-    for i, img in enumerate(all_images):
-        local = get_local_image(img, f"extra_{i}.png")
-        if local:
-            extra_images.append(local)
-            temp_files.append(local)
-
-    # -------------------------
     # 1️⃣ First Page
-    # -------------------------
     if len(prs.slides) > 0:
-        print("🖼️ Updating first page with text + circle image...")
         slide = prs.slides[0]
         text_map = {
             "Project Name": form_data.get("Project Name", ""),
@@ -215,42 +214,31 @@ def create_brochure_ppt(template_path, output_path, form_data,
             "style(s) selected": form_data.get("Which style(s) do you like?", ""),
             "Location": f"{form_data.get('City', '')}, {form_data.get('Country', '')}",
         }
-        text_map = {k: v for k, v in text_map.items() if v}
-        replace_text_in_ppt(slide, text_map)
+        replace_text_in_ppt(slide, {k: v for k, v in text_map.items() if v})
         if circle_img:
             replace_with_circle_image(slide, circle_img)
 
-    # -------------------------
     # 2️⃣ Second Page
-    # -------------------------
     if len(prs.slides) > 1:
-        print("📅 Updating second page with calendar + background...")
         slide = prs.slides[1]
         update_calendar_with_bg(prs, slide, calendar_bg)
 
-    # -------------------------
     # 3️⃣ Third Page
-    # -------------------------
     if len(prs.slides) > 2:
-        print("📐 Updating third page with layout + extra images...")
         slide = prs.slides[2]
         replace_layout_and_append_images(prs, slide, layout_img, layout_bg, extra_images)
 
-    # -------------------------
-    # Save final brochure
-    # -------------------------
+    # 4️⃣ Pages 4–7 -> Extra Images
+    if len(prs.slides) > 3:
+        print("🖼️ Filling extra images into slides 4–7...")
+        fill_extra_images_in_slides(prs, extra_images)
+
+    # Save final PPT
     prs.save(output_path)
     print(f"✅ Brochure PPT created: {output_path}")
 
-    # -------------------------
-    # 🧹 Cleanup temporary files
-    # -------------------------
-    for f in temp_files:
-        try:
-            if os.path.exists(f):
-                os.remove(f)
-                print(f"🗑️ Deleted temp file: {f}")
-        except Exception as e:
-            print(f"⚠️ Could not delete {f}: {e}")
+    # Delete local temp images
+    cleanup_temp_files(temp_files)
+    print("🗑️ Deleted temporary images")
 
     return output_path
