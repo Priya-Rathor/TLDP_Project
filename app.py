@@ -15,7 +15,7 @@ from brochure import create_brochure_ppt
 app = FastAPI()
 
 TEMPLATE_PATH ="template.pptx"
-BTEMPLATE_PATH="btemplate1.pptx"
+BTEMPLATE_PATH="btemplate.pptx"
 OUTPUT_PATH = "output.pptx"
 BOUTPUT_PATH = "Boutput.pptx"
 MONDAY_API_KEY = os.getenv("MONDAY_API_KEY", "eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjU0NjI5MjM1NywiYWFpIjoxMSwidWlkIjo3NDc3Njk5NywiaWFkIjoiMjAyNS0wOC0wNFQwOTo0MzowNS4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6MTIxNDMyMDQsInJnbiI6InVzZTEifQ.yYeelRXHOZlaxwYHBAvi6eXRzD2fNn1H-jX-Pd8Ukcw")
@@ -790,30 +790,30 @@ async def monday_webhook(request: Request):
         # ======================
         # 2) Generate FULL PPT
         # ======================
-     #   try:
-     #       form_data_for_text = {k: v for k, v in form_data.items() if k not in ["selected_styles"]}
-     #       replace_text_in_ppt(TEMPLATE_PATH, OUTPUT_PATH, form_data_for_text)
+        try:
+            form_data_for_text = {k: v for k, v in form_data.items() if k not in ["selected_styles"]}
+            replace_text_in_ppt(TEMPLATE_PATH, OUTPUT_PATH, form_data_for_text)
 
-      #      if style_images:
-       #         replace_style_placeholders(OUTPUT_PATH, OUTPUT_PATH, style_images)
-#
- #           replace_placeholders_with_images(OUTPUT_PATH, OUTPUT_PATH, categorized_images)
-#
- #           results["full"] = {
-  #              "output_file": OUTPUT_PATH,
-   #             "ppt_type": "full",
-    #            "styles_processed": selected_styles,
-     #           "style_images_found": len(style_images),
-      #          "categorized_images": categorized_images,
-       #         "email": email,
-        #        "project_name": form_data.get("Project Name", "Unknown")
-         #   }
-          #  print(f"✅ Full PPT created: {OUTPUT_PATH}")
+            if style_images:
+                replace_style_placeholders(OUTPUT_PATH, OUTPUT_PATH, style_images)
+
+            replace_placeholders_with_images(OUTPUT_PATH, OUTPUT_PATH, categorized_images)
+
+            results["full"] = {
+                "output_file": OUTPUT_PATH,
+                "ppt_type": "full",
+                "styles_processed": selected_styles,
+                "style_images_found": len(style_images),
+                "categorized_images": categorized_images,
+                "email": email,
+                "project_name": form_data.get("Project Name", "Unknown")
+            }
+            print(f"✅ Full PPT created: {OUTPUT_PATH}")
             # Optional: send email
-            # send_email_with_ppt(email, OUTPUT_PATH, form_data)
-        # except Exception as e:
-          #  print(f"⚠️ Failed to create full PPT: {e}")
-           # results["full"] = {"error": str(e)}
+            send_email_with_ppt(email, OUTPUT_PATH, form_data)
+        except Exception as e:
+            print(f"⚠️ Failed to create full PPT: {e}")
+            results["full"] = {"error": str(e)}
 
         return {
             "status": "success",

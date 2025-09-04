@@ -1,10 +1,41 @@
-# brochure.py
-
 from pptx import Presentation
 from pptx.util import Inches
 from datetime import datetime, timedelta
 from PIL import Image, ImageDraw
-import platform, os, requests
+import platform
+import os
+import requests
+import re
+
+# -------------------------
+# Layout processing for slide 3
+# -------------------------
+def process_layout_slide(prs, slide, layout_img_path, bg_img_path):
+    """Process slide 3 with layout image and background."""
+    slide_width, slide_height = prs.slide_width, prs.slide_height
+
+    # Replace {{Layout1}} placeholder
+    layout_replaced = False
+    for shape in list(slide.shapes):
+        if hasattr(shape, "text") and (("{{Layout1}}" in shape.text) or ("{{layout1}}" in shape.text)):
+            print("🔄 Replacing {{Layout1}} placeholder")
+            left, top, width, height = shape.left, shape.top, shape.width, shape.height
+            slide.shapes._spTree.remove(shape._element)
+            if layout_img_path and os.path.exists(layout_img_path):
+                slide.shapes.add_picture(layout_img_path, left, top, width, height)
+                print("✅ Layout image added")
+                layout_replaced = True
+            break
+
+    # Add background image
+    if bg_img_path and os.path.exists(bg_img_path):
+        pic = slide.shapes.add_picture(bg_img_path, 0, 0, slide_width, slide_height)
+        slide.shapes._spTree.remove(pic._element)
+        slide.shapes._spTree.insert(2, pic._element)
+        print("✅ Layout background image added")
+
+    return slide
+
 
 # -------------------------
 # Constants
@@ -19,18 +50,22 @@ else:
 # Helper: Load image from URL or path
 # -------------------------
 def get_local_image(path_or_url, tmp_name="temp_img.png"):
+    """Download image from URL or validate local path."""
     if not path_or_url:
         return None
+    
     if isinstance(path_or_url, str) and path_or_url.startswith("http"):
         try:
             resp = requests.get(path_or_url, timeout=10)
             resp.raise_for_status()
             with open(tmp_name, "wb") as f:
                 f.write(resp.content)
+            print(f"✅ Downloaded: {tmp_name}")
             return tmp_name
         except Exception as e:
             print(f"⚠️ Failed to download image {path_or_url}: {e}")
             return None
+    
     return path_or_url if os.path.exists(path_or_url) else None
 
 
@@ -38,6 +73,7 @@ def get_local_image(path_or_url, tmp_name="temp_img.png"):
 # Helper: Make circular crop
 # -------------------------
 def make_circle_image(img_path, output_path="circle_image.png"):
+    """Create a circular cropped version of the image."""
     im = Image.open(img_path).convert("RGBA")
     bigsize = (im.size[0] * 3, im.size[1] * 3)
     mask = Image.new("L", bigsize, 0)
@@ -49,33 +85,129 @@ def make_circle_image(img_path, output_path="circle_image.png"):
     return output_path
 
 
-def replace_with_circle_image(slide, img_path):
-    cropped_path = make_circle_image(img_path)
-    for shape in list(slide.shapes):
-        if hasattr(shape, "text") and "{{image1}}" in shape.text:
-            left, top, width, height = shape.left, shape.top, shape.width, shape.height
-            slide.shapes._spTree.remove(shape._element)
-            slide.shapes.add_picture(cropped_path, left, top, width, height)
-    return slide
+# -------------------------
+# SIMPLE DIAGNOSTIC: Show all text in slides
+# -------------------------
+def show_slide_text(prs):
+    """Show all text content in slides to find placeholders."""
+    print("\n🔍 CHECKING ALL SLIDES FOR PLACEHOLDERS:")
+    print("=" * 50)
+    
+    for slide_idx, slide in enumerate(prs.slides):
+        slide_num = slide_idx + 1
+        print(f"\n📄 SLIDE {slide_num}:")
+        
+        found_placeholders = []
+        for shape_idx, shape in enumerate(slide.shapes):
+            try:
+                if hasattr(shape, "text") and shape.text:
+                    text = shape.text.strip()
+                    if text:
+                        print(f"  Text: '{text}'")
+                        # Look for any placeholder patterns
+                        if "{{" in text and "}}" in text:
+                            placeholders = re.findall(r"\{\{[^}]+\}\}", text)
+                            if placeholders:
+                                found_placeholders.extend(placeholders)
+                                print(f"    🎯 PLACEHOLDERS: {placeholders}")
+            except:
+                pass
+        
+        if not found_placeholders:
+            print("  (No placeholders found)")
+    
+    print("=" * 50)
 
 
 # -------------------------
-# Calendar + background helpers
+# FIXED: Replace ALL image placeholders in ALL slides
+# -------------------------
+def replace_all_image_placeholders(prs, extra_images):
+    """
+    Replace ALL {{Image1}}, {{Image2}}, etc. across ALL slides.
+    This is the MAIN function to fix your issue.
+    """
+    print(f"\n🖼️ REPLACING IMAGE PLACEHOLDERS IN ALL SLIDES")
+    print(f"📋 Available images: {len([img for img in extra_images if img])}")
+    
+    total_replaced = 0
+    
+    for slide_idx, slide in enumerate(prs.slides):
+        slide_num = slide_idx + 1
+        print(f"\n🔍 Checking Slide {slide_num}...")
+        
+        # Get all shapes in a list to avoid modification during iteration
+        shapes_to_check = list(slide.shapes)
+        
+        for shape in shapes_to_check:
+            try:
+                if not hasattr(shape, "text"):
+                    continue
+                
+                text = shape.text
+                if not text:
+                    continue
+                
+                # Look for Image placeholders (case insensitive)
+                matches = re.findall(r"\{\{[Ii]mage(\d+)\}\}", text)
+                
+                if matches:
+                    for match in matches:
+                        placeholder_num = int(match)
+                        img_index = placeholder_num - 1  # Convert to 0-based index
+                        
+                        print(f"  🎯 Found {{Image{placeholder_num}}} placeholder")
+                        
+                        # Get shape properties
+                        left, top, width, height = shape.left, shape.top, shape.width, shape.height
+                        
+                        # Remove the placeholder shape
+                        slide.shapes._spTree.remove(shape._element)
+                        print(f"  🗑️ Removed placeholder shape")
+                        
+                        # Add image if available
+                        if 0 <= img_index < len(extra_images) and extra_images[img_index]:
+                            img_path = extra_images[img_index]
+                            if os.path.exists(img_path):
+                                slide.shapes.add_picture(img_path, left, top, width, height)
+                                print(f"  ✅ Added image: {os.path.basename(img_path)}")
+                                total_replaced += 1
+                            else:
+                                print(f"  ❌ Image file not found: {img_path}")
+                        else:
+                            print(f"  ⚠️ No image available for placeholder {placeholder_num}")
+                        
+                        break  # Only process first match per shape
+                        
+            except Exception as e:
+                print(f"  ❌ Error processing shape: {e}")
+    
+    print(f"\n📊 TOTAL IMAGES REPLACED: {total_replaced}")
+    return prs
+
+
+# -------------------------
+# Calendar helpers
 # -------------------------
 def build_mapping(start_date=None):
+    """Build date mapping for calendar placeholders."""
     if start_date is None:
         start_date = datetime.today()
+    
     mapping = {}
     for i in range(1, 8):
         date = start_date + timedelta(days=i - 1)
         mapping[f"{{{{day{i}}}}}"] = date.strftime("%a")
+    
     for i in range(1, 50):
         date = start_date + timedelta(days=i - 1)
         mapping[f"{{{{d{i}}}}}"] = date.strftime(DAY_FORMAT)
+    
     return mapping
 
 
 def replace_text_in_frame(text_frame, mapping):
+    """Replace text placeholders in a text frame."""
     for para in text_frame.paragraphs:
         for run in para.runs:
             for ph, val in mapping.items():
@@ -84,50 +216,23 @@ def replace_text_in_frame(text_frame, mapping):
 
 
 def iter_shapes(shapes):
+    """Recursively iterate through all shapes including groups."""
     for shp in shapes:
         yield shp
         if shp.shape_type == 6:  # group shape
             yield from iter_shapes(shp.shapes)
 
 
-
-def fill_extra_images_in_slides(prs, extra_images, start_slide=3):
-    """
-    Fill extra images into slides 4–7 where placeholders {{imageX}} exist.
-    start_slide=3 because Python index starts at 0 (slide 4 in PPT).
-    """
-    img_index = 1
-    for slide_num in range(start_slide, min(len(prs.slides), start_slide + 4)):
-        slide = prs.slides[slide_num]
-        for shape in list(slide.shapes):
-            if hasattr(shape, "text"):
-                placeholder = f"{{{{image{img_index}}}}}"
-                if placeholder in shape.text and img_index <= len(extra_images):
-                    left, top, width, height = shape.left, shape.top, shape.width, shape.height
-                    slide.shapes._spTree.remove(shape._element)
-                    slide.shapes.add_picture(extra_images[img_index - 1], left, top, width, height)
-                    img_index += 1
-    return prs
-
-
-
-def cleanup_temp_files(files):
-    for f in files:
-        try:
-            if f and os.path.exists(f):
-                os.remove(f)
-        except Exception as e:
-            print(f"⚠️ Could not delete {f}: {e}")
-
-
 def update_calendar_with_bg(prs, slide, image_path, start_date=None):
+    """Update calendar with background image and date mappings."""
     mapping = build_mapping(start_date)
     slide_width, slide_height = prs.slide_width, prs.slide_height
 
-    if image_path:
+    if image_path and os.path.exists(image_path):
         pic = slide.shapes.add_picture(image_path, 0, 0, width=slide_width, height=slide_height)
         slide.shapes._spTree.remove(pic._element)
         slide.shapes._spTree.insert(2, pic._element)
+        print("✅ Calendar background added")
 
     for shp in iter_shapes(slide.shapes):
         if getattr(shp, "has_table", False):
@@ -136,46 +241,12 @@ def update_calendar_with_bg(prs, slide, image_path, start_date=None):
                     replace_text_in_frame(cell.text_frame, mapping)
         elif getattr(shp, "has_text_frame", False):
             replace_text_in_frame(shp.text_frame, mapping)
+    
     return slide
 
 
-# -------------------------
-# Layout + extra images
-# -------------------------
-def replace_layout_and_append_images(prs, slide, layout_img_path, bg_img_path, extra_images):
-    slide_width, slide_height = prs.slide_width, prs.slide_height
-
-    # Replace Layout placeholder
-    for shape in list(slide.shapes):
-        if hasattr(shape, "text") and "{{Layout1}}" in shape.text:
-            left, top, width, height = shape.left, shape.top, shape.width, shape.height
-            slide.shapes._spTree.remove(shape._element)
-            if layout_img_path:
-                slide.shapes.add_picture(layout_img_path, left, top, width, height)
-
-    # Add background
-    if bg_img_path:
-        pic = slide.shapes.add_picture(bg_img_path, 0, 0, slide_width, slide_height)
-        slide.shapes._spTree.remove(pic._element)
-        slide.shapes._spTree.insert(2, pic._element)
-
-    # Replace {{image1}}, {{image2}}, ... with extra images
-    for idx, img_path in enumerate(extra_images, start=1):
-        placeholder = f"{{{{image{idx}}}}}"
-        for shape in list(slide.shapes):
-            if hasattr(shape, "text") and placeholder in shape.text:
-                left, top, width, height = shape.left, shape.top, shape.width, shape.height
-                slide.shapes._spTree.remove(shape._element)
-                slide.shapes.add_picture(img_path, left, top, width, height)
-
-    return slide
-
-
-
-# -------------------------
-# Text replacement helper
-# -------------------------
 def replace_text_in_ppt(slide, text_map):
+    """Replace text placeholders in slide."""
     for shp in iter_shapes(slide.shapes):
         if getattr(shp, "has_text_frame", False):
             for para in shp.text_frame.paragraphs:
@@ -186,59 +257,146 @@ def replace_text_in_ppt(slide, text_map):
     return slide
 
 
+def replace_with_circle_image(slide, img_path):
+    cropped_path = None
+    if not img_path or not os.path.exists(img_path):
+        print(f"⚠️ Circle image not found: {img_path}")
+        return slide, None
+    
+    cropped_path = make_circle_image(img_path)
+    
+    for shape in list(slide.shapes):
+        if hasattr(shape, "text") and (("{{Image1}}" in shape.text) or ("{{image1}}" in shape.text)):
+            print(f"🔄 Replacing {{Image1}} with circular image")
+            left, top, width, height = shape.left, shape.top, shape.width, shape.height
+            slide.shapes._spTree.remove(shape._element)
+            slide.shapes.add_picture(cropped_path, left, top, width, height)
+            print("✅ Circle image added")
+            break
+    
+    return slide, cropped_path
+
+
+
+def cleanup_temp_files(files):
+    """Clean up temporary files."""
+    cleaned = 0
+    for f in files:
+        try:
+            if f and os.path.exists(f):
+                os.remove(f)
+                cleaned += 1
+        except Exception as e:
+            print(f"⚠️ Could not delete {f}: {e}")
+    print(f"🧹 Cleaned up {cleaned} temporary files")
+
+
 # -------------------------
-# Main: Create Brochure
+# MAIN: Create Brochure (SIMPLIFIED)
 # -------------------------
 def create_brochure_ppt(template_path, output_path, form_data,
                         circle_img, calendar_bg, layout_img, layout_bg, extra_images):
+    """
+    Main function to create brochure PPT.
+    Handles Slide 1 (text + circle), Slide 2 (calendar), Slide 3 (layout + background),
+    and replaces all {{ImageX}} placeholders across all slides.
+    """
     print(f"🔄 Creating brochure PPT from {template_path}")
+    
+    # Load presentation
+    if not os.path.exists(template_path):
+        raise FileNotFoundError(f"Template file not found: {template_path}")
+    
     prs = Presentation(template_path)
+    print(f"📊 Loaded presentation with {len(prs.slides)} slides")
 
-    # Normalize images (URL → local)
+    # Show what's in the slides (debug helper)
+    show_slide_text(prs)
+
+    # -------------------------
+    # Process images
+    # -------------------------
+    print("\n🔄 Processing input images...")
     temp_files = []
-    circle_img = get_local_image(circle_img, "circle.png"); temp_files.append(circle_img)
-    calendar_bg = get_local_image(calendar_bg, "calendar_bg.png"); temp_files.append(calendar_bg)
-    layout_img = get_local_image(layout_img, "layout_img.png"); temp_files.append(layout_img)
-    layout_bg = get_local_image(layout_bg, "layout_bg.png"); temp_files.append(layout_bg)
-    extra_images = [get_local_image(img, f"extra_{i}.png") for i, img in enumerate(extra_images) if img]
-    temp_files.extend(extra_images)
+    
+    # Extra images
+    processed_extra_images = []
+    for i, img in enumerate(extra_images):
+        if img:
+            local_img = get_local_image(img, f"extra_{i}.png")
+            if local_img:
+                processed_extra_images.append(local_img)
+                temp_files.append(local_img)
+                print(f"✅ Processed image {i+1}: {os.path.basename(local_img)}")
+            else:
+                processed_extra_images.append(None)
+                print(f"❌ Failed to process image {i+1}")
+        else:
+            processed_extra_images.append(None)
+    
+    print(f"📋 Total processed images: {len([img for img in processed_extra_images if img])}")
 
-    # 1️⃣ First Page
-    if len(prs.slides) > 0:
-        slide = prs.slides[0]
-        text_map = {
-            "Project Name": form_data.get("Project Name", ""),
-            "Project Type": form_data.get("What is the nature of your project?", ""),
-            "space To be Designed": form_data.get("Space(S) to be designed", ""),
-            "Room size": form_data.get("What is the area size?", ""),
-            "style(s) selected": form_data.get("Which style(s) do you like?", ""),
-            "Location": f"{form_data.get('City', '')}, {form_data.get('Country', '')}",
-        }
-        replace_text_in_ppt(slide, {k: v for k, v in text_map.items() if v})
-        if circle_img:
-            replace_with_circle_image(slide, circle_img)
+    # -------------------------
+    # Slide 1 (Text + Circle Image)
+    # -------------------------
+    circle_img = get_local_image(circle_img, "circle.png")
+    if circle_img: 
+        temp_files.append(circle_img)
+        if len(prs.slides) > 0:
+            print("\n🔄 Processing Slide 1...")
+            slide = prs.slides[0]
+            text_map = {
+                "Project Name": form_data.get("Project Name", ""),
+                "Project Type": form_data.get("What is the nature of your project?", ""),
+                "space To be Designed": form_data.get("Space(S) to be designed", ""),
+                "Room size": form_data.get("What is the area size?", ""),
+                "style(s) selected": form_data.get("Which style(s) do you like?", ""),
+                "Location": f"{form_data.get('City', '')}, {form_data.get('Country', '')}",
+            }
+            replace_text_in_ppt(slide, {k: v for k, v in text_map.items() if v})
+            slide, cropped_circle = replace_with_circle_image(slide, circle_img)
+            if cropped_circle:
+                temp_files.append(cropped_circle)  # cleanup later
 
-    # 2️⃣ Second Page
-    if len(prs.slides) > 1:
-        slide = prs.slides[1]
-        update_calendar_with_bg(prs, slide, calendar_bg)
+    # -------------------------
+    # Slide 2 (Calendar)
+    # -------------------------
+    calendar_bg = get_local_image(calendar_bg, "calendar_bg.png")
+    if calendar_bg: 
+        temp_files.append(calendar_bg)
+        if len(prs.slides) > 1:
+            print("\n🔄 Processing Slide 2 (Calendar)...")
+            slide = prs.slides[1]
+            update_calendar_with_bg(prs, slide, calendar_bg)
+     
+    # -------------------------
+    # Slide 3 (Layout + Background)
+    # -------------------------
+    layout_img = get_local_image(layout_img, "layout_img.png")
+    layout_bg = get_local_image(layout_bg, "layout_bg.png")
+    if layout_img: temp_files.append(layout_img)
+    if layout_bg: temp_files.append(layout_bg)
 
-    # 3️⃣ Third Page
     if len(prs.slides) > 2:
+        print("\n🔄 Processing Slide 3 (Layout + Background)...")
         slide = prs.slides[2]
-        replace_layout_and_append_images(prs, slide, layout_img, layout_bg, extra_images)
+        process_layout_slide(prs, slide, layout_img, layout_bg)
+       
+    # -------------------------
+    # Replace ALL {{ImageX}} placeholders in ALL slides
+    # -------------------------
+    replace_all_image_placeholders(prs, processed_extra_images)
 
-    # 4️⃣ Pages 4–7 -> Extra Images
-    if len(prs.slides) > 3:
-        print("🖼️ Filling extra images into slides 4–7...")
-        fill_extra_images_in_slides(prs, extra_images)
-
+    # -------------------------
     # Save final PPT
+    # -------------------------
+    print(f"\n💾 Saving presentation to: {output_path}")
     prs.save(output_path)
     print(f"✅ Brochure PPT created: {output_path}")
 
-    # Delete local temp images
+    # -------------------------
+    # Cleanup temp files
+    # -------------------------
     cleanup_temp_files(temp_files)
-    print("🗑️ Deleted temporary images")
 
     return output_path
