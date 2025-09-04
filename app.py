@@ -12,8 +12,6 @@ from pptx.util import Inches
 from brochure import create_brochure_ppt
 from email_utils import send_email_with_ppt
 
-
-
 app = FastAPI()
 
 TEMPLATE_PATH ="template.pptx"
@@ -24,10 +22,41 @@ MONDAY_API_KEY = os.getenv("MONDAY_API_KEY", "eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjU0N
 MONDAY_API_URL = "https://api.monday.com/v2"
 STYLE_FOLDER = "styleGuide"
 
+# ✅ ADD: Track processed items to prevent duplicate emails
+PROCESSED_ITEMS = set()
+EMAIL_SENT_LOG = "email_sent_log.txt"
 
+def load_processed_items():
+    """Load previously processed item IDs from file"""
+    global PROCESSED_ITEMS
+    if os.path.exists(EMAIL_SENT_LOG):
+        try:
+            with open(EMAIL_SENT_LOG, 'r') as f:
+                PROCESSED_ITEMS = set(line.strip() for line in f if line.strip())
+            print(f"📋 Loaded {len(PROCESSED_ITEMS)} previously processed items")
+        except Exception as e:
+            print(f"⚠️ Error loading processed items: {e}")
+            PROCESSED_ITEMS = set()
+    else:
+        PROCESSED_ITEMS = set()
 
+def mark_item_as_processed(item_id):
+    """Mark an item as processed and save to file"""
+    global PROCESSED_ITEMS
+    PROCESSED_ITEMS.add(str(item_id))
+    try:
+        with open(EMAIL_SENT_LOG, 'a') as f:
+            f.write(f"{item_id}\n")
+        print(f"✅ Marked item {item_id} as processed")
+    except Exception as e:
+        print(f"⚠️ Error saving processed item: {e}")
 
+def is_item_processed(item_id):
+    """Check if an item has already been processed"""
+    return str(item_id) in PROCESSED_ITEMS
 
+# Load processed items on startup
+load_processed_items()
 
 def get_file_download_url(asset_id: int) -> str:
     """
@@ -245,14 +274,13 @@ def map_webhook_to_form(event: dict):
 
 def fetch_user_details(email: str):
     try:
-        url = f"https://tldp.omrsolutions.com/get_user_details.php?email={email}"
+        url = f"https://hhrkxn6g-80.inc1.devtunnels.ms/tldpproj/well-known/get_user_details.php?email={email}"
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             return response.json()
     except Exception as e:
         print("Error fetching user details:", e)
     return {}
-
 
 def get_item_files(item_id: int):
     """
@@ -690,8 +718,6 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
     return output_path
 
 
-
-
 @app.post("/monday-webhook")
 async def monday_webhook(request: Request):
     body = await request.json()
@@ -702,6 +728,17 @@ async def monday_webhook(request: Request):
     if "event" in body:
         event = body["event"]
         item_id = event.get("pulseId")
+        
+        # ✅ CHECK: Skip if already processed
+        if is_item_processed(item_id):
+            print(f"⏭️ Item {item_id} already processed, skipping email...")
+            return {
+                "status": "skipped",
+                "message": f"Item {item_id} already processed",
+                "item_id": item_id
+            }
+        
+        print(f"🆕 Processing new item: {item_id}")
         
         # --- Step 1: Map webhook data ---
         form_data = map_webhook_to_form(event)
@@ -784,13 +821,6 @@ async def monday_webhook(request: Request):
             print(f"⚠️ Failed to create brochure PPT: {e}")
             results["brochure"] = {"error": str(e)}
 
-
-        except Exception as e:
-            print(f"⚠️ Failed to create brochure PPT: {e}")
-            results["brochure"] = {"error": str(e)}
-
-        
-
         # ======================
         # 2) Generate FULL PPT
         # ======================
@@ -818,9 +848,9 @@ async def monday_webhook(request: Request):
             print(f"⚠️ Failed to create full PPT: {e}")
             results["full"] = {"error": str(e)}
 
-        #=====================
-        #  send email with both PPTs
-        #=====================
+        # =====================
+        # ✅ SEND EMAIL ONLY ONCE
+        # =====================
         print("📧 Preparing to send email with PPTs...")
      
         subject = f"Your Project PPTs - {form_data.get('Project Name', 'Untitled Project')}"
@@ -833,23 +863,35 @@ async def monday_webhook(request: Request):
 
         file_paths = [OUTPUT_PATH, BOUTPUT_PATH]
 
-       # Filter missing files (send only existing ones)
+        # Filter missing files (send only existing ones)
         file_paths = [f for f in file_paths if os.path.exists(f)]
 
         # ⚡ Force send only to client
         recipient = "rathorpriya1718@gmail.com"
         print(f"📦 Files ready for email: {file_paths}")
+        
+        email_sent = False
         if file_paths:
-           send_email_with_ppt(recipient, subject, body, file_paths)
-           print(f"📧 Email sent to {recipient} with {len(file_paths)} attachment(s)")
+            try:
+                send_email_with_ppt(recipient, subject, body, file_paths)
+                print(f"📧 Email sent to {recipient} with {len(file_paths)} attachment(s)")
+                email_sent = True
+            except Exception as e:
+                print(f"⚠️ Failed to send email: {e}")
+                email_sent = False
         else:
-          print("⚠️ No PPT files found to attach in email")
+            print("⚠️ No PPT files found to attach in email")
 
-
+        # ✅ MARK AS PROCESSED (regardless of email success)
+        mark_item_as_processed(item_id)
+        
         return {
             "status": "success",
             "message": "Both PPTs processed",
-            "results": results
+            "results": results,
+            "item_id": item_id,
+            "email_sent": email_sent,
+            "processed_timestamp": str(os.path.getmtime(EMAIL_SENT_LOG) if os.path.exists(EMAIL_SENT_LOG) else "N/A")
         }
 
     return {"status": "ok", "message": "Webhook received but no event data"}

@@ -7,8 +7,8 @@ def send_email_with_ppt(recipient: str, subject: str, body: str, file_paths: lis
     Send an email with one or more PPT attachments.
     Includes better error handling and debug logs.
     """
-    sender = os.getenv("EMAIL_USER", "divyanshi.pal.2408@gmail.com")
-    password = os.getenv("EMAIL_PASSWORD", "llpd xolt lubx qqyc")
+    sender = os.getenv("EMAIL_USER", "pr3101165@gmail.com")
+    password = os.getenv("EMAIL_PASSWORD", "vvrc wfvy pkox wsqn")
 
     if not sender or not password:
         print("❌ ERROR: Email credentials are missing. Set EMAIL_USER and EMAIL_PASSWORD.")
