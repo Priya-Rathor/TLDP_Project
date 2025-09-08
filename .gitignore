@@ -1,0 +1,11 @@
+.env
+
+audiotext.py
+
+__pycache__/
+.qodoc/
+.vscode/
+
+
+
+summary.py
