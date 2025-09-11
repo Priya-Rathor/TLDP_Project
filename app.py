@@ -15,7 +15,7 @@ from PIL import Image
 
 app = FastAPI()
 
-TEMPLATE_PATH ="template1.pptx"
+TEMPLATE_PATH ="template.pptx"
 BTEMPLATE_PATH="btemplate.pptx"
 OUTPUT_PATH = "output.pptx"
 BOUTPUT_PATH = "Boutput.pptx"
@@ -168,7 +168,10 @@ def get_image_dimensions_enhanced(img_path_or_bytes):
     except Exception as e:
         print(f"❌ Failed to get image dimensions: {e}")
         return None
-
+    
+    
+    
+    
 def replace_placeholders_with_images(pptx_path, output_path, categorized_images):
     """
     Replace placeholders like {{Image1}}, {{Layout2}}, {{Elevation1}}, {{Inspiration1}} 
@@ -222,7 +225,7 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
                 img_path = images[num]
                 print(f"\n🔄 Processing: {text} → {img_path}")
 
-                # Store placeholder position and size BEFORE removing it
+                # STORE PLACEHOLDER POSITION AND SIZE BEFORE REMOVING IT
                 placeholder_left = shape.left
                 placeholder_top = shape.top
                 placeholder_width = shape.width
@@ -245,21 +248,27 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
                     img_file = img_path
 
                 try:
-                    # Get original image dimensions with enhanced function
+                    # Get original image dimensions
                     img_dimensions = get_image_dimensions_enhanced(img_file if img_file else img_path)
                     
                     if img_dimensions:
                         img_width, img_height = img_dimensions
                         print(f"📏 Original image: {img_width}x{img_height}px")
                         
-                        # Calculate image size to fit within placeholder bounds with 800px max width
+                        # Calculate image size to fit within placeholder bounds with 600px max width
                         new_width, new_height = calculate_image_size_for_slide(
-                            img_width, img_height, placeholder_width, placeholder_height, max_width_px=800
+                            img_width, img_height, placeholder_width, placeholder_height, max_width_px=600
                         )
                         
-                        # Position image EXACTLY at placeholder location (not centered on slide)
+                        # POSITION IMAGE AT PLACEHOLDER LOCATION (NOT CENTERED ON SLIDE)
                         left = placeholder_left
                         top = placeholder_top
+                        
+                        # Optional: Center within placeholder bounds if image is smaller
+                        if new_width < placeholder_width:
+                            left = placeholder_left + (placeholder_width - new_width) // 2
+                        if new_height < placeholder_height:
+                            top = placeholder_top + (placeholder_height - new_height) // 2
                         
                         # Ensure image doesn't go off-slide bounds
                         left = max(0, min(left, slide_width - new_width))
@@ -303,7 +312,6 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
     prs.save(output_path)
     print(f"💾 Saved presentation: {output_path}")
     return output_path
-
 
 def get_file_download_url(asset_id: int) -> str:
     """
