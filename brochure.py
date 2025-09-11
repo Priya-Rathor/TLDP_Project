@@ -6,7 +6,10 @@ import platform
 import os
 import requests
 import re
-
+from pptx import Presentation
+from pptx.util import Inches
+from PIL import Image
+import os, re
 # -------------------------
 # Layout processing for slide 3
 # -------------------------
@@ -122,69 +125,82 @@ def show_slide_text(prs):
 # -------------------------
 # FIXED: Replace ALL image placeholders in ALL slides
 # -------------------------
+
+
 def replace_all_image_placeholders(prs, extra_images):
     """
-    Replace ALL {{Image1}}, {{Image2}}, etc. across ALL slides.
-    This is the MAIN function to fix your issue.
+    Replace ALL {{Image1}}, {{Image2}}, etc. across ALL slides,
+    inserting images at their ORIGINAL size (scaled only if too big).
     """
     print(f"\n🖼️ REPLACING IMAGE PLACEHOLDERS IN ALL SLIDES")
     print(f"📋 Available images: {len([img for img in extra_images if img])}")
     
     total_replaced = 0
+    slide_width = prs.slide_width
+    slide_height = prs.slide_height
     
     for slide_idx, slide in enumerate(prs.slides):
         slide_num = slide_idx + 1
         print(f"\n🔍 Checking Slide {slide_num}...")
-        
-        # Get all shapes in a list to avoid modification during iteration
+
         shapes_to_check = list(slide.shapes)
         
         for shape in shapes_to_check:
             try:
-                if not hasattr(shape, "text"):
+                if not hasattr(shape, "text") or not shape.text:
                     continue
-                
-                text = shape.text
-                if not text:
-                    continue
-                
-                # Look for Image placeholders (case insensitive)
-                matches = re.findall(r"\{\{[Ii]mage(\d+)\}\}", text)
+
+                # Look for {{ImageX}} placeholders
+                matches = re.findall(r"\{\{[Ii]mage(\d+)\}\}", shape.text)
                 
                 if matches:
                     for match in matches:
                         placeholder_num = int(match)
-                        img_index = placeholder_num - 1  # Convert to 0-based index
+                        img_index = placeholder_num - 1  # zero-based index
                         
                         print(f"  🎯 Found {{Image{placeholder_num}}} placeholder")
+
+                        # Record placeholder position
+                        left, top = shape.left, shape.top
                         
-                        # Get shape properties
-                        left, top, width, height = shape.left, shape.top, shape.width, shape.height
-                        
-                        # Remove the placeholder shape
+                        # Remove placeholder
                         slide.shapes._spTree.remove(shape._element)
-                        print(f"  🗑️ Removed placeholder shape")
+                        print("  🗑️ Removed placeholder shape")
                         
-                        # Add image if available
+                        # Insert image if available
                         if 0 <= img_index < len(extra_images) and extra_images[img_index]:
                             img_path = extra_images[img_index]
                             if os.path.exists(img_path):
-                                slide.shapes.add_picture(img_path, left, top, width, height)
-                                print(f"  ✅ Added image: {os.path.basename(img_path)}")
+                                # Get original image size
+                                with Image.open(img_path) as img:
+                                    px_width, px_height = img.size
+                                
+                                # Convert px → EMU (1 inch = 96 px = 914400 EMU)
+                                emu_width = int(px_width * 914400 / 96)
+                                emu_height = int(px_height * 914400 / 96)
+
+                                # Scale down if too big for slide
+                                if emu_width > slide_width or emu_height > slide_height:
+                                    scale = min(slide_width / emu_width, slide_height / emu_height)
+                                    emu_width = int(emu_width * scale)
+                                    emu_height = int(emu_height * scale)
+
+                                # Add picture at original/native size
+                                slide.shapes.add_picture(img_path, left, top, width=emu_width, height=emu_height)
+                                print(f"  ✅ Added original-size image: {os.path.basename(img_path)}")
                                 total_replaced += 1
                             else:
-                                print(f"  ❌ Image file not found: {img_path}")
+                                print(f"  ❌ Image not found: {img_path}")
                         else:
                             print(f"  ⚠️ No image available for placeholder {placeholder_num}")
                         
-                        break  # Only process first match per shape
-                        
+                        break  # handle one match per shape
+
             except Exception as e:
                 print(f"  ❌ Error processing shape: {e}")
     
     print(f"\n📊 TOTAL IMAGES REPLACED: {total_replaced}")
     return prs
-
 
 # -------------------------
 # Calendar helpers

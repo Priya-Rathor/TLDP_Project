@@ -11,10 +11,11 @@ from zipfile import ZipFile
 from pptx.util import Inches
 from brochure import create_brochure_ppt
 from email_utils import send_email_with_ppt
+from PIL import Image
 
 app = FastAPI()
 
-TEMPLATE_PATH ="template.pptx"
+TEMPLATE_PATH ="template1.pptx"
 BTEMPLATE_PATH="btemplate.pptx"
 OUTPUT_PATH = "output.pptx"
 BOUTPUT_PATH = "Boutput.pptx"
@@ -57,6 +58,252 @@ def is_item_processed(item_id):
 
 # Load processed items on startup
 load_processed_items()
+
+def get_image_dimensions(img_path_or_bytes):
+    """
+    Get original dimensions of an image.
+    Returns (width, height) in pixels or None if failed.
+    """
+    try:
+        if isinstance(img_path_or_bytes, str) and img_path_or_bytes.startswith("http"):
+            # Download image to get dimensions
+            response = requests.get(img_path_or_bytes, timeout=10)
+            response.raise_for_status()
+            img_bytes = BytesIO(response.content)
+            img = Image.open(img_bytes)
+        elif isinstance(img_path_or_bytes, str):
+            # Local file path
+            img = Image.open(img_path_or_bytes)
+        else:
+            # BytesIO object
+            img = Image.open(img_path_or_bytes)
+        
+        return img.size  # Returns (width, height)
+    except Exception as e:
+        print(f"⚠️ Failed to get image dimensions: {e}")
+        return None
+
+def calculate_image_size_for_slide(img_width, img_height, placeholder_width, placeholder_height, maintain_aspect=True, max_width_px=600):
+    """
+    Calculate the best size for an image with a maximum width constraint of 800px.
+    
+    Args:
+        img_width, img_height: Original image dimensions in pixels
+        placeholder_width, placeholder_height: Placeholder dimensions in PowerPoint EMUs
+        maintain_aspect: Whether to maintain aspect ratio
+        max_width_px: Maximum width in pixels (default 800)
+    
+    Returns:
+        (new_width, new_height) in PowerPoint units (EMUs)
+    """
+    print(f"🔍 Input: img={img_width}x{img_height}px, placeholder={placeholder_width}x{placeholder_height}EMUs, max_width={max_width_px}px")
+    
+    if not maintain_aspect:
+        return placeholder_width, placeholder_height
+    
+    # Convert pixels to PowerPoint EMUs (English Metric Units)
+    # 1 inch = 914400 EMUs, assuming 72 DPI (standard for most images)
+    PIXELS_PER_INCH = 72
+    EMUS_PER_INCH = 914400
+    
+    # FORCE the width limit - this is critical
+    original_width = img_width
+    if img_width > max_width_px:
+        # Scale down to max width while maintaining aspect ratio
+        scale_factor = max_width_px / img_width
+        img_width = max_width_px
+        img_height = int(img_height * scale_factor)
+        print(f"⚡ FORCED scaling: {original_width}x{img_height//scale_factor}px → {img_width}x{img_height}px (factor: {scale_factor:.3f})")
+    else:
+        print(f"✅ Image width {img_width}px is within {max_width_px}px limit")
+    
+    # Convert image dimensions from pixels to EMUs
+    img_width_emu = int((img_width / PIXELS_PER_INCH) * EMUS_PER_INCH)
+    img_height_emu = int((img_height / PIXELS_PER_INCH) * EMUS_PER_INCH)
+    
+    print(f"📐 Converted to EMUs: {img_width_emu}x{img_height_emu}")
+    
+    # Check if we need further scaling to fit placeholder bounds
+    width_scale = placeholder_width / img_width_emu if img_width_emu > placeholder_width else 1.0
+    height_scale = placeholder_height / img_height_emu if img_height_emu > placeholder_height else 1.0
+    
+    # Use the smaller scale to ensure image fits within placeholder bounds
+    final_scale = min(width_scale, height_scale, 1.0)  # Never scale up beyond original
+    
+    new_width = int(img_width_emu * final_scale)
+    new_height = int(img_height_emu * final_scale)
+    
+    print(f"📏 Final result: {new_width}x{new_height} EMUs (final_scale: {final_scale:.3f})")
+    print(f"📊 Size check: {new_width/EMUS_PER_INCH*PIXELS_PER_INCH:.0f}x{new_height/EMUS_PER_INCH*PIXELS_PER_INCH:.0f}px equivalent")
+    
+    return new_width, new_height
+
+def get_image_dimensions_enhanced(img_path_or_bytes):
+    """
+    Enhanced version with better error handling and debugging.
+    """
+    try:
+        print(f"🔍 Getting dimensions for: {type(img_path_or_bytes)} {str(img_path_or_bytes)[:100]}...")
+        
+        if isinstance(img_path_or_bytes, str) and img_path_or_bytes.startswith("http"):
+            # Download image to get dimensions
+            print(f"⬇️ Downloading image from URL...")
+            response = requests.get(img_path_or_bytes, timeout=15)
+            response.raise_for_status()
+            img_bytes = BytesIO(response.content)
+            img = Image.open(img_bytes)
+        elif isinstance(img_path_or_bytes, str):
+            # Local file path
+            print(f"📁 Opening local file...")
+            img = Image.open(img_path_or_bytes)
+        else:
+            # BytesIO object
+            print(f"💾 Opening from BytesIO...")
+            img_path_or_bytes.seek(0)  # Reset position
+            img = Image.open(img_path_or_bytes)
+        
+        dimensions = img.size  # Returns (width, height)
+        print(f"✅ Image dimensions detected: {dimensions[0]}x{dimensions[1]}px")
+        return dimensions
+    except Exception as e:
+        print(f"❌ Failed to get image dimensions: {e}")
+        return None
+
+def replace_placeholders_with_images(pptx_path, output_path, categorized_images):
+    """
+    Replace placeholders like {{Image1}}, {{Layout2}}, {{Elevation1}}, {{Inspiration1}} 
+    with categorized images positioned at the placeholder's exact location.
+    """
+    prs = Presentation(pptx_path)
+
+    # Get slide dimensions
+    slide_width = prs.slide_width
+    slide_height = prs.slide_height
+    print(f"📏 Slide dimensions: {slide_width} x {slide_height}")
+
+    # Build category mapping
+    category_map = {
+        "Layout": categorized_images.get("floor_plans", []),
+        "Elevation": categorized_images.get("elevation_drawings", []),
+        "Inspiration": categorized_images.get("inspiration_images", []),
+        "Image": categorized_images.get("existing_pictures", []),
+    }
+
+    slides_to_delete = []
+
+    for slide_idx, slide in enumerate(prs.slides):
+        replaced_any = False
+        found_placeholder = False
+
+        for shape in list(slide.shapes):
+            if not shape.has_text_frame:
+                continue
+
+            if shape.has_text_frame:
+                text = "".join(r.text for p in shape.text_frame.paragraphs for r in p.runs).strip()
+            else:
+                text = shape.text.strip()
+
+            # Match placeholders like {{CategoryN}} but EXCLUDE style placeholders
+            match = re.match(r"\{\{(\w+)(\d+)\}\}", text)
+            if not match:
+                continue
+
+            category, num = match.group(1), int(match.group(2)) - 1
+            
+            # Skip style placeholders (they're handled separately)
+            if category.lower() == "style":
+                continue
+
+            found_placeholder = True
+            images = category_map.get(category)
+
+            if images and num < len(images):
+                img_path = images[num]
+                print(f"\n🔄 Processing: {text} → {img_path}")
+
+                # Store placeholder position and size BEFORE removing it
+                placeholder_left = shape.left
+                placeholder_top = shape.top
+                placeholder_width = shape.width
+                placeholder_height = shape.height
+                
+                print(f"📍 Placeholder: pos=({placeholder_left}, {placeholder_top}), size={placeholder_width}x{placeholder_height}EMUs")
+
+                # Download if URL, else use local path
+                img_file = None
+                if isinstance(img_path, str) and img_path.startswith("http"):
+                    try:
+                        resp = requests.get(img_path, timeout=20)
+                        resp.raise_for_status()
+                        img_file = BytesIO(resp.content)
+                        print(f"✅ Downloaded {len(resp.content)} bytes")
+                    except Exception as e:
+                        print(f"❌ Download failed: {e}")
+                        continue
+                else:
+                    img_file = img_path
+
+                try:
+                    # Get original image dimensions with enhanced function
+                    img_dimensions = get_image_dimensions_enhanced(img_file if img_file else img_path)
+                    
+                    if img_dimensions:
+                        img_width, img_height = img_dimensions
+                        print(f"📏 Original image: {img_width}x{img_height}px")
+                        
+                        # Calculate image size to fit within placeholder bounds with 800px max width
+                        new_width, new_height = calculate_image_size_for_slide(
+                            img_width, img_height, placeholder_width, placeholder_height, max_width_px=800
+                        )
+                        
+                        # Position image EXACTLY at placeholder location (not centered on slide)
+                        left = placeholder_left
+                        top = placeholder_top
+                        
+                        # Ensure image doesn't go off-slide bounds
+                        left = max(0, min(left, slide_width - new_width))
+                        top = max(0, min(top, slide_height - new_height))
+                        
+                        print(f"🎯 Final placement: {new_width}x{new_height}EMUs at ({left}, {top})")
+                        
+                    else:
+                        # Fallback: use placeholder dimensions and position
+                        print("⚠️ Could not detect image dimensions - using placeholder size")
+                        left, top, new_width, new_height = placeholder_left, placeholder_top, placeholder_width, placeholder_height
+
+                    # Remove placeholder and add image at its exact position
+                    sp = shape._element
+                    sp.getparent().remove(sp)
+                    
+                    slide.shapes.add_picture(img_file, left, top, new_width, new_height)
+                    replaced_any = True
+                    print(f"✅ Image inserted at placeholder position")
+
+                except Exception as e:
+                    print(f"❌ Failed to insert image: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    
+            else:
+                print(f"⚠️ No image available for {text}")
+                shape.text = ""  # Clear placeholder if no image
+
+        # Mark slides for deletion if no images were added
+        if found_placeholder and not replaced_any:
+            has_pictures = any(shape.shape_type == 13 for shape in slide.shapes)
+            if not has_pictures:
+                print(f"🗑️ Marking slide {slide_idx+1} for deletion (no images)")
+                slides_to_delete.append(slide)
+
+    # Delete marked slides
+    for slide in slides_to_delete:
+        delete_slide(prs, slide)
+
+    prs.save(output_path)
+    print(f"💾 Saved presentation: {output_path}")
+    return output_path
+
 
 def get_file_download_url(asset_id: int) -> str:
     """
@@ -272,9 +519,14 @@ def map_webhook_to_form(event: dict):
         "words describe the feel for space": col.get("short_text5fonuzuu", {}).get("value"),
     }
 
+
+
+
+
+
 def fetch_user_details(email: str):
     try:
-        url = f"https://hhrkxn6g-80.inc1.devtunnels.ms/tldpproj/well-known/get_user_details.php?email={email}"
+        url = f"https://migrate.omrsolutions.com/get_user_details.php?email={email}"
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             return response.json()
@@ -572,13 +824,18 @@ def delete_slide(prs, slide):
 
 def replace_style_placeholders(pptx_path, output_path, style_images):
     """
-    NEW FUNCTION: Replace style placeholders like {{style1}}, {{style2}}, etc. with style images.
-    This function runs BEFORE the main image replacement function.
+    ✅ UPDATED: Replace style placeholders like {{style1}}, {{style2}}, etc. with style images.
+    Style images now FILL THE ENTIRE SLIDE.
     """
     prs = Presentation(pptx_path)
     slides_to_delete = []
 
+    # Get slide dimensions
+    slide_width = prs.slide_width
+    slide_height = prs.slide_height
+
     print(f"🎨 Starting style placeholder replacement with {len(style_images)} style images")
+    print(f"📏 Slide dimensions: {slide_width} x {slide_height}")
 
     for slide_idx, slide in enumerate(prs.slides):
         replaced_any = False
@@ -600,15 +857,17 @@ def replace_style_placeholders(pptx_path, output_path, style_images):
 
             if style_num < len(style_images):
                 img_path = style_images[style_num]
-                print(f"🎨 Replacing {text} with style image: {img_path}")
+                print(f"🎨 Replacing {text} with style image: {img_path} (FULL SLIDE)")
 
                 try:
-                    # Replace placeholder with style image
-                    left, top, width, height = shape.left, shape.top, shape.width, shape.height
+                    # ✅ REMOVE THE PLACEHOLDER SHAPE FIRST
                     sp = shape._element
                     sp.getparent().remove(sp)
-                    slide.shapes.add_picture(img_path, left, top, width, height)
+                    
+                    # ✅ ADD IMAGE TO FILL ENTIRE SLIDE (position at 0,0 with full dimensions)
+                    slide.shapes.add_picture(img_path, 0, 0, slide_width, slide_height)
                     replaced_any = True
+                    print(f"✅ Style image {img_path} added as full-slide background")
                     
                 except Exception as e:
                     print(f"⚠️ Failed to insert style image {img_path}: {e}")
@@ -632,10 +891,15 @@ def replace_style_placeholders(pptx_path, output_path, style_images):
 
 def replace_placeholders_with_images(pptx_path, output_path, categorized_images):
     """
-    Replace placeholders like {{Image1}}, {{Layout2}}, {{Elevation1}}, {{Inspiration1}} 
-    with categorized images (excludes style placeholders as they're handled separately).
+    ✅ UPDATED: Replace placeholders like {{Image1}}, {{Layout2}}, {{Elevation1}}, {{Inspiration1}} 
+    with categorized images using ORIGINAL IMAGE SIZES (scaled to fit slide if needed).
     """
     prs = Presentation(pptx_path)
+
+    # Get slide dimensions
+    slide_width = prs.slide_width
+    slide_height = prs.slide_height
+    print(f"📏 Slide dimensions: {slide_width} x {slide_height}")
 
     # ✅ Build category mapping (REMOVED Style from here)
     category_map = {
@@ -677,9 +941,10 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
 
             if images and num < len(images):
                 img_path = images[num]
-                print(f"✅ Replacing {text} with {img_path}")
+                print(f"✅ Replacing {text} with {img_path} (using original dimensions)")
 
                 # Download if URL, else use local path
+                img_file = None
                 if isinstance(img_path, str) and img_path.startswith("http"):
                     try:
                         resp = requests.get(img_path, timeout=20)
@@ -691,16 +956,44 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
                 else:
                     img_file = img_path
 
-                # Replace placeholder with image
-                left, top, width, height = shape.left, shape.top, shape.width, shape.height
-                sp = shape._element
-                sp.getparent().remove(sp)
-                slide.shapes.add_picture(img_file, left, top, width, height)
+                try:
+                    # ✅ GET ORIGINAL IMAGE DIMENSIONS
+                    img_dimensions = get_image_dimensions(img_file if img_file else img_path)
+                    
+                    if img_dimensions:
+                        img_width, img_height = img_dimensions
+                        print(f"📏 Original image size: {img_width}x{img_height}px")
+                        
+                        # ✅ CALCULATE BEST SIZE TO FIT SLIDE WHILE MAINTAINING ASPECT RATIO
+                        new_width, new_height = calculate_image_size_for_slide(
+                            img_width, img_height, slide_width, slide_height
+                        )
+                        
+                        # ✅ CENTER THE IMAGE ON THE SLIDE
+                        left = (slide_width - new_width) // 2
+                        top = (slide_height - new_height) // 2
+                        
+                        print(f"📏 Calculated size: {new_width}x{new_height}, Position: ({left}, {top})")
+                        
+                    else:
+                        # Fallback to placeholder size if we can't get dimensions
+                        print("⚠️ Could not get image dimensions, using placeholder size")
+                        left, top, new_width, new_height = shape.left, shape.top, shape.width, shape.height
 
-                replaced_any = True
+                    # ✅ REMOVE PLACEHOLDER AND ADD IMAGE
+                    sp = shape._element
+                    sp.getparent().remove(sp)
+                    
+                    slide.shapes.add_picture(img_file, left, top, new_width, new_height)
+                    replaced_any = True
+                    print(f"✅ Image inserted with original proportions")
+
+                except Exception as e:
+                    print(f"⚠️ Failed to insert image {img_path}: {e}")
+                    
             else:
                 print(f"⚠️ No image available for {text}, placeholder removed")
-                shape.text =""  # Clear placeholder if no image
+                shape.text = ""  # Clear placeholder if no image
 
         # ✅ If slide had placeholders but no replacement and no pictures → delete it
         if found_placeholder and not replaced_any:
@@ -757,18 +1050,25 @@ async def monday_webhook(request: Request):
         if not email:
             email = form_data.get("Email") or form_data.get("email") or "krgarav@gmail.com"
 
+    
         # --- Step 4: Fetch extra details ---
         user_details = fetch_user_details(email)
+
         if user_details.get("status") == "success":
-            qd = user_details["data"][0]["quotationdetails"]
-           # if qd.get("project_type"):
-           #    form_data["What is the property type?"] = qd["project_type"]
-            if qd.get("area_size"):
-                form_data["What is the area size?"] = qd["area_size"]
-            if qd.get("project_name"):
-                form_data["Project Name"] = qd["project_name"]
-            if qd.get("residential_type"):
-                form_data["What is the nature of your project?"] = qd["residential_type"]
+             qd = user_details.get("data", {}).get("quotationdetails", {})
+             if qd.get("area_size"):  
+               form_data["What is the area size?"] = qd["area_size"]
+               form_data["what is the area size?"] = qd["area_size"]  # 
+             if qd.get("project_name"):
+               form_data["Project Name"] = qd["project_name"]
+               form_data["**Project Name**"] = qd["project_name"]
+               form_data["project name"] = qd["project_name"]
+    
+             if qd.get("residential_type"):
+              form_data["What is the nature of your project?"] = qd["residential_type"]
+              form_data["what is the nature of your project?"] = qd["residential_type"]
+             else:
+              print(f"⚠️ No data found for user {email} in user_details")
 
         # --- Step 5: Categorize images ---
         categorized_images = categorize_and_collect_images(event)
@@ -876,6 +1176,10 @@ async def monday_webhook(request: Request):
                 send_email_with_ppt(recipient, subject, body, file_paths)
                 print(f"📧 Email sent to {recipient} with {len(file_paths)} attachment(s)")
                 email_sent = True
+                for  f in file_paths:
+                    if os.path.exists(f):
+                        os.remove(f)
+                        print(f"🗑️ Deleted temporary file: {f}")
             except Exception as e:
                 print(f"⚠️ Failed to send email: {e}")
                 email_sent = False
