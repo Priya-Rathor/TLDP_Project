@@ -605,13 +605,30 @@ def get_item_files(item_id: int):
 
 def replace_text_in_ppt(template_path: str, output_path: str, text_map: dict):
     """
-    Replace only text placeholders in PPT (no image insertion)
+    Enhanced text replacement with better debugging and placeholder matching
     """
     print(f"🔄 Replacing text in PPT: {template_path} -> {output_path}")
     prs = Presentation(template_path)
     
     replacements_made = 0
+    all_found_text = []  # To debug what placeholders exist
     
+    # First pass: collect all text to see what's in the template
+    for slide_idx, slide in enumerate(prs.slides):
+        for shape_idx, shape in enumerate(slide.shapes):
+            if not shape.has_text_frame:
+                continue
+            
+            for p_idx, p in enumerate(shape.text_frame.paragraphs):
+                for r_idx, run in enumerate(p.runs):
+                    if run.text.strip():
+                        all_found_text.append(f"Slide {slide_idx+1}: '{run.text.strip()}'")
+    
+    print("📝 All text found in template:")
+    for text in all_found_text[:20]:  # Show first 20 to avoid spam
+        print(f"  {text}")
+    
+    # Second pass: actual replacement
     for slide_idx, slide in enumerate(prs.slides):
         for shape_idx, shape in enumerate(slide.shapes):
             if not shape.has_text_frame:
@@ -622,25 +639,37 @@ def replace_text_in_ppt(template_path: str, output_path: str, text_map: dict):
                     original_text = run.text
                     
                     for placeholder, value in text_map.items():
-                        if not value:
+                        if not value:  # Skip empty values
                             continue
                         
-                        # Try exact match first
+                        # Method 1: Exact match
                         if placeholder in run.text:
                             run.text = run.text.replace(placeholder, str(value))
                             replacements_made += 1
-                            print(f"✅ Replaced '{placeholder}' with '{value}' in slide {slide_idx + 1}")
+                            print(f"✅ Exact match: '{placeholder}' -> '{value}' in slide {slide_idx + 1}")
                         
-                        # Try case-insensitive match
+                        # Method 2: Case-insensitive match
                         elif placeholder.lower() in run.text.lower():
-                            # Find the actual text to replace (preserving case)
                             import re
                             pattern = re.compile(re.escape(placeholder), re.IGNORECASE)
-                            run.text = pattern.sub(str(value), run.text)
-                            replacements_made += 1
-                            print(f"✅ Replaced '{placeholder}' (case-insensitive) with '{value}' in slide {slide_idx + 1}")
+                            new_text = pattern.sub(str(value), run.text)
+                            if new_text != run.text:
+                                run.text = new_text
+                                replacements_made += 1
+                                print(f"✅ Case-insensitive: '{placeholder}' -> '{value}' in slide {slide_idx + 1}")
+                        
+                        # Method 3: Partial match (for debugging)
+                        elif any(word in run.text.lower() for word in placeholder.lower().split()):
+                            print(f"🔍 Partial match found but not replaced: '{placeholder}' in '{run.text.strip()}'")
     
     print(f"📝 Total replacements made: {replacements_made}")
+    
+    # Debug: Show what wasn't replaced
+    print("\n🔍 Form data that might not have been used:")
+    for key, value in text_map.items():
+        if value and "area size" in key.lower():
+            print(f"  '{key}': '{value}'")
+    
     prs.save(output_path)
     return output_path
 
@@ -1058,25 +1087,50 @@ async def monday_webhook(request: Request):
         if not email:
             email = form_data.get("Email") or form_data.get("email") or "krgarav@gmail.com"
 
-    
         # --- Step 4: Fetch extra details ---
         user_details = fetch_user_details(email)
+        print(f"🔍 User details response: {user_details}")  # Debug line
 
         if user_details.get("status") == "success":
-             qd = user_details.get("data", {}).get("quotationdetails", {})
-             if qd.get("area_size"):  
-               form_data["What is the area size?"] = qd["area_size"]
-               form_data["what is the area size?"] = qd["area_size"]  # 
-             if qd.get("project_name"):
-               form_data["Project Name"] = qd["project_name"]
-               form_data["**Project Name**"] = qd["project_name"]
-               form_data["project name"] = qd["project_name"]
-    
-             if qd.get("residential_type"):
-              form_data["What is the nature of your project?"] = qd["residential_type"]
-              form_data["what is the nature of your project?"] = qd["residential_type"]
-             else:
-              print(f"⚠️ No data found for user {email} in user_details")
+            qd = user_details.get("data", {}).get("quotationdetails", {})
+            print(f"📊 Quotation details: {qd}")  # Debug line
+            
+            if qd.get("area_size"):
+                area_size_value = qd["area_size"]
+                print(f"✅ Area size found: '{area_size_value}'")  # Debug line
+                
+                # Add multiple variations to catch different placeholder formats
+                form_data["What is the area size?"] = area_size_value
+                form_data["what is the area size?"] = area_size_value
+                form_data["{{What is the area size?}}"] = area_size_value
+                form_data["{{what is the area size?}}"] = area_size_value
+                form_data["Area Size"] = area_size_value
+                form_data["{{Area Size}}"] = area_size_value
+                form_data["area size"] = area_size_value
+                form_data["{{area size}}"] = area_size_value
+                form_data["AREA SIZE"] = area_size_value
+                form_data["{{AREA SIZE}}"] = area_size_value
+            else:
+                print(f"⚠️ No area_size found in quotation details")
+                
+            if qd.get("project_name"):
+                project_name_value = qd["project_name"]
+                print(f"✅ Project name found: '{project_name_value}'")
+                form_data["Project Name"] = project_name_value
+                form_data["**Project Name**"] = project_name_value
+                form_data["project name"] = project_name_value
+                form_data["{{Project Name}}"] = project_name_value
+                form_data["{{project name}}"] = project_name_value
+
+            if qd.get("residential_type"):
+                residential_type_value = qd["residential_type"]
+                print(f"✅ Residential type found: '{residential_type_value}'")
+                form_data["What is the nature of your project?"] = residential_type_value
+                form_data["what is the nature of your project?"] = residential_type_value
+                form_data["{{What is the nature of your project?}}"] = residential_type_value
+                form_data["{{what is the nature of your project?}}"] = residential_type_value
+        else:
+            print(f"⚠️ No data found for user {email} in user_details or API call failed")
 
         # --- Step 5: Categorize images ---
         categorized_images = categorize_and_collect_images(event)
@@ -1134,6 +1188,13 @@ async def monday_webhook(request: Request):
         # ======================
         try:
             form_data_for_text = {k: v for k, v in form_data.items() if k not in ["selected_styles"]}
+            
+            # Debug: Print what we're about to pass to text replacement
+            print(f"📝 Form data for text replacement (area_size related):")
+            for key, value in form_data_for_text.items():
+                if "area" in key.lower() or "size" in key.lower():
+                    print(f"  '{key}': '{value}'")
+            
             replace_text_in_ppt(TEMPLATE_PATH, OUTPUT_PATH, form_data_for_text)
 
             if style_images:
@@ -1207,3 +1268,5 @@ async def monday_webhook(request: Request):
         }
 
     return {"status": "ok", "message": "Webhook received but no event data"}
+
+
