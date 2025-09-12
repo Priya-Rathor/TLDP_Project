@@ -1236,7 +1236,7 @@ async def monday_webhook(request: Request):
         file_paths = [f for f in file_paths if os.path.exists(f)]
 
         # ⚡ Force send only to client
-        recipient = "rathorpriya1718@gmail.com"
+        recipient = "priya.rathor.266393@gmail.com"
         print(f"📦 Files ready for email: {file_paths}")
         
         email_sent = False
