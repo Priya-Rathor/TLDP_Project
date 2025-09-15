@@ -15,7 +15,7 @@ from PIL import Image
 
 app = FastAPI()
 
-TEMPLATE_PATH ="template.pptx"
+TEMPLATE_PATH ="template1.pptx"
 BTEMPLATE_PATH="btemplate.pptx"
 OUTPUT_PATH = "output.pptx"
 BOUTPUT_PATH = "Boutput.pptx"
@@ -1141,47 +1141,47 @@ async def monday_webhook(request: Request):
         # ======================
         # 3) Generate BROCHURE PPT
         # ======================
-        try:
-            # Pick best-fit images from categorized_images + styles
-            circle_img = (categorized_images.get("existing_pictures") or [None])[0]  
-            calendar_bg = (categorized_images.get("existing_pictures") or [None])[0]
-            layout_img = (categorized_images.get("floor_plans") or [None])[0]
-            layout_bg = (
-                (categorized_images.get("existing_pictures") or [None])[1]
-                if len(categorized_images.get("existing_pictures", [])) > 1
-                else calendar_bg
-            )
-            extra_images =[]
-            extra_images.extend(categorized_images.get("existing_pictures", []))
-            extra_images.extend(categorized_images.get("floor_plans", []))
-            extra_images.extend(categorized_images.get("elevation_drawings", []))
+        # try:
+        #     # Pick best-fit images from categorized_images + styles
+        #     circle_img = (categorized_images.get("existing_pictures") or [None])[0]  
+        #     calendar_bg = (categorized_images.get("existing_pictures") or [None])[0]
+        #     layout_img = (categorized_images.get("floor_plans") or [None])[0]
+        #     layout_bg = (
+        #         (categorized_images.get("existing_pictures") or [None])[1]
+        #         if len(categorized_images.get("existing_pictures", [])) > 1
+        #         else calendar_bg
+        #     )
+        #     extra_images =[]
+        #     extra_images.extend(categorized_images.get("existing_pictures", []))
+        #     extra_images.extend(categorized_images.get("floor_plans", []))
+        #     extra_images.extend(categorized_images.get("elevation_drawings", []))
 
-            brochure_ppt = create_brochure_ppt(
-                BTEMPLATE_PATH,
-                BOUTPUT_PATH,
-                form_data=form_data,
-                circle_img=circle_img,
-                calendar_bg=calendar_bg,
-                layout_img=layout_img,
-                layout_bg=layout_bg,
-                extra_images=extra_images,
-            )
+        #     brochure_ppt = create_brochure_ppt(
+        #         BTEMPLATE_PATH,
+        #         BOUTPUT_PATH,
+        #         form_data=form_data,
+        #         circle_img=circle_img,
+        #         calendar_bg=calendar_bg,
+        #         layout_img=layout_img,
+        #         layout_bg=layout_bg,
+        #         extra_images=extra_images,
+        #     )
 
-            results["brochure"] = {
-                "output_file": brochure_ppt,
-                "ppt_type": "brochure",
-                "styles_processed": selected_styles,
-                "style_images_found": len(style_images),
-                "email": email,
-                "project_name": form_data.get("Project Name", "Unknown"),
-            }
+        #     results["brochure"] = {
+        #         "output_file": brochure_ppt,
+        #         "ppt_type": "brochure",
+        #         "styles_processed": selected_styles,
+        #         "style_images_found": len(style_images),
+        #         "email": email,
+        #         "project_name": form_data.get("Project Name", "Unknown"),
+        #     }
 
-            print(f"✅ Brochure PPT created: {brochure_ppt}")
-            # send_email_with_ppt(email, brochure_ppt, form_data)  # optional email sending
+        #     print(f"✅ Brochure PPT created: {brochure_ppt}")
+        #     # send_email_with_ppt(email, brochure_ppt, form_data)  # optional email sending
 
-        except Exception as e:
-            print(f"⚠️ Failed to create brochure PPT: {e}")
-            results["brochure"] = {"error": str(e)}
+        # except Exception as e:
+        #     print(f"⚠️ Failed to create brochure PPT: {e}")
+        #     results["brochure"] = {"error": str(e)}
 
         # ======================
         # 2) Generate FULL PPT
@@ -1220,52 +1220,52 @@ async def monday_webhook(request: Request):
         # =====================
         # ✅ SEND EMAIL ONLY ONCE
         # =====================
-        print("📧 Preparing to send email with PPTs...")
+        # print("📧 Preparing to send email with PPTs...")
      
-        subject = f"Your Project PPTs - {form_data.get('Project Name', 'Untitled Project')}"
-        body = (
-               "Hello,\n\n"
-               "Please find attached the generated brochure and style guide PPTs "
-               "for your project.\n\n"
-               "Best regards,\nDesign Team"
-            )
+        # subject = f"Your Project PPTs - {form_data.get('Project Name', 'Untitled Project')}"
+        # body = (
+        #        "Hello,\n\n"
+        #        "Please find attached the generated brochure and style guide PPTs "
+        #        "for your project.\n\n"
+        #        "Best regards,\nDesign Team"
+        #     )
 
-        file_paths = [OUTPUT_PATH, BOUTPUT_PATH]
+        # file_paths = [OUTPUT_PATH, BOUTPUT_PATH]
 
-        # Filter missing files (send only existing ones)
-        file_paths = [f for f in file_paths if os.path.exists(f)]
+        # # Filter missing files (send only existing ones)
+        # file_paths = [f for f in file_paths if os.path.exists(f)]
 
-        # ⚡ Force send only to client
-        recipient = "priya.rathor.266393@gmail.com"
-        print(f"📦 Files ready for email: {file_paths}")
+        # # ⚡ Force send only to client
+        # recipient = "priya.rathor.266393@gmail.com"
+        # print(f"📦 Files ready for email: {file_paths}")
         
-        email_sent = False
-        if file_paths:
-            try:
-                send_email_with_ppt(recipient, subject, body, file_paths)
-                print(f"📧 Email sent to {recipient} with {len(file_paths)} attachment(s)")
-                email_sent = True
-                for  f in file_paths:
-                    if os.path.exists(f):
-                        os.remove(f)
-                        print(f"🗑️ Deleted temporary file: {f}")
-            except Exception as e:
-                print(f"⚠️ Failed to send email: {e}")
-                email_sent = False
-        else:
-            print("⚠️ No PPT files found to attach in email")
+        # email_sent = False
+        # if file_paths:
+        #     try:
+        #         send_email_with_ppt(recipient, subject, body, file_paths)
+        #         print(f"📧 Email sent to {recipient} with {len(file_paths)} attachment(s)")
+        #         email_sent = True
+        #         for  f in file_paths:
+        #             if os.path.exists(f):
+        #                 os.remove(f)
+        #                 print(f"🗑️ Deleted temporary file: {f}")
+        #     except Exception as e:
+        #         print(f"⚠️ Failed to send email: {e}")
+        #         email_sent = False
+        # else:
+        #     print("⚠️ No PPT files found to attach in email")
 
-        # ✅ MARK AS PROCESSED (regardless of email success)
-        mark_item_as_processed(item_id)
+        # # ✅ MARK AS PROCESSED (regardless of email success)
+        # mark_item_as_processed(item_id)
         
-        return {
-            "status": "success",
-            "message": "Both PPTs processed",
-            "results": results,
-            "item_id": item_id,
-            "email_sent": email_sent,
-            "processed_timestamp": str(os.path.getmtime(EMAIL_SENT_LOG) if os.path.exists(EMAIL_SENT_LOG) else "N/A")
-        }
+        # return {
+        #     "status": "success",
+        #     "message": "Both PPTs processed",
+        #     "results": results,
+        #     "item_id": item_id,
+        #     "email_sent": email_sent,
+        #     "processed_timestamp": str(os.path.getmtime(EMAIL_SENT_LOG) if os.path.exists(EMAIL_SENT_LOG) else "N/A")
+        # }
 
     return {"status": "ok", "message": "Webhook received but no event data"}
 
