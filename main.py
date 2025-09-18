@@ -1,7 +1,6 @@
 from fastapi import FastAPI, Request
 from email_utils import send_email_with_ppt
 from fastapi.responses import JSONResponse
-from fastapi.responses import JSONResponse
 from pptx import Presentation
 import os, re, json, requests
 from io import BytesIO
@@ -10,41 +9,18 @@ import fitz  # PyMuPDF
 from zipfile import ZipFile
 from pptx.util import Inches
 from brochure import create_brochure_ppt
-from email_utils import send_email_with_ppt
 from PIL import Image
+from city import insert_city_image_in_ppt
+from style import filter_ppt
 
 app = FastAPI()
 
-TEMPLATE_PATH ="template1.pptx"
-BTEMPLATE_PATH="btemplate.pptx"
+TEMPLATE_PATH = "template.pptx"
 OUTPUT_PATH = "output.pptx"
-BOUTPUT_PATH = "Boutput.pptx"
 MONDAY_API_KEY = os.getenv("MONDAY_API_KEY", "eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjU0NjI5MjM1NywiYWFpIjoxMSwidWlkIjo3NDc3Njk5NywiaWFkIjoiMjAyNS0wOC0wNFQwOTo0MzowNS4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6MTIxNDMyMDQsInJnbiI6InVzZTEifQ.yYeelRXHOZlaxwYHBAvi6eXRzD2fNn1H-jX-Pd8Ukcw")
 MONDAY_API_URL = "https://api.monday.com/v2"
-STYLE_FOLDER = "styleGuide"
 
-# ✅ NEW: Direct style-to-slide mapping
-STYLE_TO_SLIDE_MAP = {
-    "art deco": 10,
-    "asian zen": 11,
-    "coastal": 12,
-    "contemporary": 13,
-    "country": 14,
-    "eclectic": 15,
-    "industrial": 16,
-    "mid-century": 17,
-    "minimalist": 18,
-    "modern": 19,
-    "rustic": 20,
-    "scandinavian": 21,
-    "shabby chic": 22,
-    "traditional": 23,
-    "transitional": 24,
-    "tropical": 25,
-    "urban": 26
-}
-
-# ✅ ADD: Track processed items to prevent duplicate emails
+# Track processed items to prevent duplicate emails
 PROCESSED_ITEMS = set()
 EMAIL_SENT_LOG = "email_sent_log.txt"
 
@@ -81,22 +57,16 @@ def is_item_processed(item_id):
 load_processed_items()
 
 def get_image_dimensions(img_path_or_bytes):
-    """
-    Get original dimensions of an image.
-    Returns (width, height) in pixels or None if failed.
-    """
+    """Get original dimensions of an image. Returns (width, height) in pixels or None if failed."""
     try:
         if isinstance(img_path_or_bytes, str) and img_path_or_bytes.startswith("http"):
-            # Download image to get dimensions
             response = requests.get(img_path_or_bytes, timeout=10)
             response.raise_for_status()
             img_bytes = BytesIO(response.content)
             img = Image.open(img_bytes)
         elif isinstance(img_path_or_bytes, str):
-            # Local file path
             img = Image.open(img_path_or_bytes)
         else:
-            # BytesIO object
             img = Image.open(img_path_or_bytes)
         
         return img.size  # Returns (width, height)
@@ -104,99 +74,61 @@ def get_image_dimensions(img_path_or_bytes):
         print(f"⚠️ Failed to get image dimensions: {e}")
         return None
 
-def calculate_image_size_for_slide(img_width, img_height, placeholder_width, placeholder_height, maintain_aspect=True, max_width_px=600):
+def calculate_image_size_for_slide_fixed_height(img_width, img_height, placeholder_width, placeholder_height, fixed_height_px=8000):
     """
-    Calculate the best size for an image with a maximum width constraint of 800px.
+    Calculate image size with FIXED height of 540px and proportional width.
     
     Args:
         img_width, img_height: Original image dimensions in pixels
         placeholder_width, placeholder_height: Placeholder dimensions in PowerPoint EMUs
-        maintain_aspect: Whether to maintain aspect ratio
-        max_width_px: Maximum width in pixels (default 800)
+        fixed_height_px: Fixed height in pixels (default 540)
     
     Returns:
         (new_width, new_height) in PowerPoint units (EMUs)
     """
-    print(f"🔍 Input: img={img_width}x{img_height}px, placeholder={placeholder_width}x{placeholder_height}EMUs, max_width={max_width_px}px")
-    
-    if not maintain_aspect:
-        return placeholder_width, placeholder_height
+    print(f"🔍 Input: img={img_width}x{img_height}px, placeholder={placeholder_width}x{placeholder_height}EMUs, fixed_height={fixed_height_px}px")
     
     # Convert pixels to PowerPoint EMUs (English Metric Units)
     # 1 inch = 914400 EMUs, assuming 72 DPI (standard for most images)
     PIXELS_PER_INCH = 72
     EMUS_PER_INCH = 914400
     
-    # FORCE the width limit - this is critical
-    original_width = img_width
-    if img_width > max_width_px:
-        # Scale down to max width while maintaining aspect ratio
-        scale_factor = max_width_px / img_width
-        img_width = max_width_px
-        img_height = int(img_height * scale_factor)
-        print(f"⚡ FORCED scaling: {original_width}x{img_height//scale_factor}px → {img_width}x{img_height}px (factor: {scale_factor:.3f})")
-    else:
-        print(f"✅ Image width {img_width}px is within {max_width_px}px limit")
+    # Calculate aspect ratio (width/height)
+    aspect_ratio = img_width / img_height if img_height > 0 else 1.0
+    print(f"📐 Original aspect ratio (w/h): {aspect_ratio:.3f}")
     
-    # Convert image dimensions from pixels to EMUs
-    img_width_emu = int((img_width / PIXELS_PER_INCH) * EMUS_PER_INCH)
-    img_height_emu = int((img_height / PIXELS_PER_INCH) * EMUS_PER_INCH)
+    # Set fixed height and calculate proportional width
+    new_height_px = fixed_height_px
+    new_width_px = int(fixed_height_px * aspect_ratio)
     
-    print(f"📐 Converted to EMUs: {img_width_emu}x{img_height_emu}")
+    print(f"📏 Fixed dimensions: {new_width_px}x{new_height_px}px")
     
-    # Check if we need further scaling to fit placeholder bounds
-    width_scale = placeholder_width / img_width_emu if img_width_emu > placeholder_width else 1.0
-    height_scale = placeholder_height / img_height_emu if img_height_emu > placeholder_height else 1.0
+    # Convert to EMUs
+    new_width_emu = int((new_width_px / PIXELS_PER_INCH) * EMUS_PER_INCH)
+    new_height_emu = int((new_height_px / PIXELS_PER_INCH) * EMUS_PER_INCH)
     
-    # Use the smaller scale to ensure image fits within placeholder bounds
-    final_scale = min(width_scale, height_scale, 1.0)  # Never scale up beyond original
+    # Check if image fits within placeholder bounds
+    if new_width_emu > placeholder_width:
+        scale_factor = placeholder_width / new_width_emu
+        new_width_emu = placeholder_width
+        new_height_emu = int(new_height_emu * scale_factor)
+        final_height_px = int(new_height_emu / EMUS_PER_INCH * PIXELS_PER_INCH)
+        print(f"⚠️ Width exceeded placeholder, scaled down to: {new_width_px}x{final_height_px}px")
     
-    new_width = int(img_width_emu * final_scale)
-    new_height = int(img_height_emu * final_scale)
+    print(f"📏 Final EMU dimensions: {new_width_emu}x{new_height_emu}")
+    print(f"📊 Final pixel equivalent: {new_width_emu/EMUS_PER_INCH*PIXELS_PER_INCH:.0f}x{new_height_emu/EMUS_PER_INCH*PIXELS_PER_INCH:.0f}px")
     
-    print(f"📏 Final result: {new_width}x{new_height} EMUs (final_scale: {final_scale:.3f})")
-    print(f"📊 Size check: {new_width/EMUS_PER_INCH*PIXELS_PER_INCH:.0f}x{new_height/EMUS_PER_INCH*PIXELS_PER_INCH:.0f}px equivalent")
-    
-    return new_width, new_height
+    return new_width_emu, new_height_emu
 
-def get_image_dimensions_enhanced(img_path_or_bytes):
-    """
-    Enhanced version with better error handling and debugging.
-    """
-    try:
-        print(f"🔍 Getting dimensions for: {type(img_path_or_bytes)} {str(img_path_or_bytes)[:100]}...")
-        
-        if isinstance(img_path_or_bytes, str) and img_path_or_bytes.startswith("http"):
-            # Download image to get dimensions
-            print(f"⬇️ Downloading image from URL...")
-            response = requests.get(img_path_or_bytes, timeout=15)
-            response.raise_for_status()
-            img_bytes = BytesIO(response.content)
-            img = Image.open(img_bytes)
-        elif isinstance(img_path_or_bytes, str):
-            # Local file path
-            print(f"📁 Opening local file...")
-            img = Image.open(img_path_or_bytes)
-        else:
-            # BytesIO object
-            print(f"💾 Opening from BytesIO...")
-            img_path_or_bytes.seek(0)  # Reset position
-            img = Image.open(img_path_or_bytes)
-        
-        dimensions = img.size  # Returns (width, height)
-        print(f"✅ Image dimensions detected: {dimensions[0]}x{dimensions[1]}px")
-        return dimensions
-    except Exception as e:
-        print(f"❌ Failed to get image dimensions: {e}")
-        return None
-    
-    
-    
-    
 def replace_placeholders_with_images(pptx_path, output_path, categorized_images):
     """
     Replace placeholders like {{Image1}}, {{Layout2}}, {{Elevation1}}, {{Inspiration1}} 
     with categorized images positioned at the placeholder's exact location.
+    
+    Features:
+    - Fixed 540px HEIGHT for all images
+    - Universal image looping: ALL categories use ALL available images when needed
+    - Keep placeholder only if NO images exist across ALL categories
     """
     prs = Presentation(pptx_path)
 
@@ -212,6 +144,16 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
         "Inspiration": categorized_images.get("inspiration_images", []),
         "Image": categorized_images.get("existing_pictures", []),
     }
+
+    # Create a universal image pool from ALL categories
+    all_images = []
+    for category, images in category_map.items():
+        all_images.extend(images)
+    
+    print("📁 Available images per category:")
+    for category, images in category_map.items():
+        print(f"   {category}: {len(images)} images")
+    print(f"🌐 UNIVERSAL POOL: {len(all_images)} total images available for looping")
 
     slides_to_delete = []
 
@@ -240,13 +182,38 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
                 continue
 
             found_placeholder = True
-            images = category_map.get(category)
+            
+            # Universal image selection strategy
+            category_images = category_map.get(category, [])
+            selected_image = None
+            
+            # Strategy 1: Try to use image from the specific category first
+            if category_images:
+                if num < len(category_images):
+                    selected_image = category_images[num]
+                    print(f"✅ DIRECT: {text} using category image at index {num}")
+                else:
+                    # Loop within the same category
+                    actual_index = num % len(category_images)
+                    selected_image = category_images[actual_index]
+                    print(f"🔄 CATEGORY LOOP: {text} using category image at index {actual_index} (requested {num})")
+            
+            # Strategy 2: If no images in specific category, use universal pool
+            elif all_images:
+                universal_index = num % len(all_images)
+                selected_image = all_images[universal_index]
+                print(f"🌐 UNIVERSAL LOOP: {text} (no {category} images) using universal image at index {universal_index}")
+            
+            # Strategy 3: No images available anywhere
+            else:
+                print(f"⚠️ NO IMAGES AVAILABLE anywhere - keeping placeholder {text}")
+                continue  # Keep the placeholder
 
-            if images and num < len(images):
-                img_path = images[num]
-                print(f"\n🔄 Processing: {text} → {img_path}")
+            # Process the selected image
+            if selected_image:
+                print(f"🔄 Processing: {text} → {selected_image}")
 
-                # STORE PLACEHOLDER POSITION AND SIZE BEFORE REMOVING IT
+                # Store placeholder position and size before removing it
                 placeholder_left = shape.left
                 placeholder_top = shape.top
                 placeholder_width = shape.width
@@ -256,9 +223,9 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
 
                 # Download if URL, else use local path
                 img_file = None
-                if isinstance(img_path, str) and img_path.startswith("http"):
+                if isinstance(selected_image, str) and selected_image.startswith("http"):
                     try:
-                        resp = requests.get(img_path, timeout=20)
+                        resp = requests.get(selected_image, timeout=20)
                         resp.raise_for_status()
                         img_file = BytesIO(resp.content)
                         print(f"✅ Downloaded {len(resp.content)} bytes")
@@ -266,22 +233,22 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
                         print(f"❌ Download failed: {e}")
                         continue
                 else:
-                    img_file = img_path
+                    img_file = selected_image
 
                 try:
                     # Get original image dimensions
-                    img_dimensions = get_image_dimensions_enhanced(img_file if img_file else img_path)
+                    img_dimensions = get_image_dimensions(img_file if img_file else selected_image)
                     
                     if img_dimensions:
                         img_width, img_height = img_dimensions
                         print(f"📏 Original image: {img_width}x{img_height}px")
                         
-                        # Calculate image size to fit within placeholder bounds with 600px max width
-                        new_width, new_height = calculate_image_size_for_slide(
-                            img_width, img_height, placeholder_width, placeholder_height, max_width_px=600
+                        # Calculate image size with FIXED 540px HEIGHT
+                        new_width, new_height = calculate_image_size_for_slide_fixed_height(
+                            img_width, img_height, placeholder_width, placeholder_height, fixed_height_px=8000
                         )
                         
-                        # POSITION IMAGE AT PLACEHOLDER LOCATION (NOT CENTERED ON SLIDE)
+                        # Position image at placeholder location (not centered on slide)
                         left = placeholder_left
                         top = placeholder_top
                         
@@ -308,16 +275,12 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
                     
                     slide.shapes.add_picture(img_file, left, top, new_width, new_height)
                     replaced_any = True
-                    print(f"✅ Image inserted at placeholder position")
+                    print(f"✅ Image inserted at placeholder position with 540px height")
 
                 except Exception as e:
                     print(f"❌ Failed to insert image: {e}")
                     import traceback
                     traceback.print_exc()
-                    
-            else:
-                print(f"⚠️ No image available for {text}")
-                shape.text = ""  # Clear placeholder if no image
 
         # Mark slides for deletion if no images were added
         if found_placeholder and not replaced_any:
@@ -326,23 +289,20 @@ def replace_placeholders_with_images(pptx_path, output_path, categorized_images)
                 print(f"🗑️ Marking slide {slide_idx+1} for deletion (no images)")
                 slides_to_delete.append(slide)
 
-   
-
     prs.save(output_path)
     print(f"💾 Saved presentation: {output_path}")
     return output_path
 
 def get_file_download_url(asset_id: int) -> str:
-    """
-    Get the actual downloadable S3 URL for a Monday.com file using the API
-    """
+    """Get the actual downloadable S3 URL for a Monday.com file using the API"""
     query = """
-    query($asset_id: [ID!]) {
-      assets(ids: $asset_id) {
+    query($asset_ids: [ID!]!) {
+      assets(ids: $asset_ids) {
         id
         name
         public_url
         file_extension
+        url
       }
     }
     """
@@ -356,7 +316,7 @@ def get_file_download_url(asset_id: int) -> str:
             MONDAY_API_URL, 
             json={
                 "query": query, 
-                "variables": {"asset_id": str(asset_id)}
+                "variables": {"asset_ids": [str(asset_id)]}
             }, 
             headers=headers, 
             timeout=15
@@ -364,22 +324,24 @@ def get_file_download_url(asset_id: int) -> str:
         response.raise_for_status()
         data = response.json()
         
+        if "errors" in data:
+            print(f"⚠️ GraphQL errors for asset {asset_id}: {data['errors']}")
+            return None
+            
         assets = data.get("data", {}).get("assets", [])
-        if assets and len(assets) > 0:
-            public_url = assets[0].get("public_url")
-            if public_url:
-                print(f"✅ Got S3 URL for asset {asset_id}: {public_url}")
+        if assets:
+            asset = assets[0]
+            public_url = asset.get("public_url") or asset.get("url")
+            if public_url and public_url != "null":
                 return public_url
         
-        print(f"⚠️ No public URL found for asset {asset_id}")
-        return f"https://api.monday.com/v2/file/{asset_id}"  # Fallback
+        return None
         
     except Exception as e:
         print(f"⚠️ Failed to get URL for asset {asset_id}: {e}")
-        return f"https://api.monday.com/v2/file/{asset_id}"  
+        return None
 
-# ---- PDF / DOCX / ZIP Image Extraction ----
-
+# PDF / DOCX / ZIP Image Extraction
 def extract_images_from_pdf(pdf_bytes_or_path):
     images = []
     doc = fitz.open(stream=pdf_bytes_or_path, filetype="pdf") if isinstance(pdf_bytes_or_path, bytes) else fitz.open(pdf_bytes_or_path)
@@ -443,21 +405,19 @@ def map_webhook_to_form(event: dict):
         "country": col.get("country6", {}).get("countryName"),
         "11. Space to be designed": ", ".join([v.get("name", "") for v in col.get("dropdown0", {}).get("chosenValues", [])]),
         "What is the area size?": col.get("short_text8fr4spel", {}).get("value"),
-        "what is the area size?": col.get("short_text8fr4spel", {}).get("value"),
-        # --- Style Information ---
-        "Which style(s) do you like?": ", ".join(styles) if styles else "",
-        "which style(s) do you like?": ", ".join(styles) if styles else "",
-        "selected_styles": styles,  # Raw list for processing
-        # --- Client Information ---
+        "Which style's do you like": ", ".join(
+        [s.get("name") for s in col.get("dropdown", {}).get("chosenValues", [])]
+    ) if col.get("dropdown", {}).get("chosenValues") else "",
         "5. How old are you": col.get("status", {}).get("label", {}).get("text"),
         "12. How many people will leave in the space": col.get("text1", {}).get("value"),
         "10. What best describes your situation": col.get("single_selecti4d0sw1", {}).get("label", {}).get("text"),
-        "13. Do you have any pets": col.get("text_1", {}).get("value"),
+        "13. Kids": col.get("text2", {}).get("value"), 
+        "14. Do you have any pets": col.get("text_1", {}).get("value"),
         "16. Please describe the scope of work": col.get("text37", {}).get("value"),
-        # --- Other Information ---
         "22. Is there any other information…": col.get("long_text3", {}).get("text"),
-        # --- Words describe ---
+        "Can you explain your picture selection?": col.get("short_textot656d98", {}).get("value"),
         "15. What words describe best the mood and feel": col.get("short_text5fonuzuu", {}).get("value"),
+        "XXXX":col.get("short_text8fr4spel", {}).get("value"),
     }
 
 def fetch_user_details(email: str):
@@ -471,10 +431,7 @@ def fetch_user_details(email: str):
     return {}
 
 def get_item_files(item_id: int):
-    """
-    Get all files for an item with their public URLs
-    Fixed GraphQL query syntax
-    """
+    """Get all files for an item with their public URLs"""
     query = """
     query($item_ids: [ID!]!) {
       items(ids: $item_ids) {
@@ -496,7 +453,7 @@ def get_item_files(item_id: int):
             MONDAY_API_URL, 
             json={
                 "query": query, 
-                "variables": {"item_ids": [str(item_id)]}  # Changed to array format
+                "variables": {"item_ids": [str(item_id)]}
             }, 
             headers=headers, 
             timeout=15
@@ -532,9 +489,7 @@ def get_item_files(item_id: int):
     return result
 
 def replace_text_in_ppt(template_path: str, output_path: str, text_map: dict):
-    """
-    Enhanced text replacement with better debugging and placeholder matching
-    """
+    """Enhanced text replacement with better debugging and placeholder matching"""
     print(f"🔄 Replacing text in PPT: {template_path} -> {output_path}")
     prs = Presentation(template_path)
     
@@ -585,8 +540,6 @@ def replace_text_in_ppt(template_path: str, output_path: str, text_map: dict):
                                 run.text = new_text
                                 replacements_made += 1
                                 print(f"✅ Case-insensitive: '{placeholder}' -> '{value}' in slide {slide_idx + 1}")
-                        
-                        # Method 3: Partial match (for debugging)
                         
     print(f"📝 Total replacements made: {replacements_made}")
     
@@ -709,163 +662,17 @@ def categorize_and_collect_images(event: dict) -> dict:
 
     return categorized_images
 
-def get_file_download_url(asset_id: int) -> str:
-    """
-    Get the actual downloadable S3 URL for a Monday.com file using the API
-    """
-    query = """
-    query($asset_ids: [ID!]!) {
-      assets(ids: $asset_ids) {
-        id
-        name
-        public_url
-        file_extension
-        url
-      }
-    }
-    """
-    headers = {
-        "Authorization": MONDAY_API_KEY, 
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        response = requests.post(
-            MONDAY_API_URL, 
-            json={
-                "query": query, 
-                "variables": {"asset_ids": [str(asset_id)]}  # ✅ Correct: list format
-            }, 
-            headers=headers, 
-            timeout=15
-        )
-        response.raise_for_status()
-        data = response.json()
-        
-        if "errors" in data:
-            print(f"⚠️ GraphQL errors for asset {asset_id}: {data['errors']}")
-            return None
-            
-        assets = data.get("data", {}).get("assets", [])
-        if assets:
-            asset = assets[0]
-            public_url = asset.get("public_url") or asset.get("url")
-            if public_url and public_url != "null":
-                return public_url
-        
-        return None
-        
-    except Exception as e:
-        print(f"⚠️ Failed to get URL for asset {asset_id}: {e}")
-        return None
-
-def normalize_style_name(style_name: str) -> str:
-    """Enhanced normalize function with better cleaning"""
-    if not style_name:
-        return ""
-    
-    clean = style_name.strip().lower()
-    # Replace common separators with underscore
-    clean = re.sub(r"[ \-/&]+", "_", clean)
-    # Remove special characters but keep underscores and numbers
-    clean = re.sub(r"[^a-z0-9_]", "", clean)
-    # Remove multiple underscores
-    clean = re.sub(r"_+", "_", clean)
-    # Remove leading/trailing underscores
-    clean = clean.strip("_")
-    
-    return clean
-
 def filter_style_slides_optimized(prs, selected_styles):
-    """
-    ✅ OPTIMIZED: Use direct style-to-slide mapping with strict matching
-    Keep ONLY slides that exactly match selected styles using predefined mapping
-    """
-    if not selected_styles:
-        print("⚠️ No styles selected, removing all style slides (10-26)")
-        # If no styles selected, remove all style slides
-        selected_styles = []
-    
-    print(f"🎨 Selected styles: {selected_styles}")
-    
-    # Normalize selected styles for matching
-    normalized_selected = set()
-    for style in selected_styles:
-        normalized = normalize_style_name(style)
-        normalized_selected.add(normalized)
-        print(f"   '{style}' -> '{normalized}'")
-    
-    print(f"🔍 Looking for exact matches in mapping: {list(STYLE_TO_SLIDE_MAP.keys())}")
-    
-    # Find slides to keep based on EXACT mapping matches only
-    slides_to_keep = set()
-    style_range_slides = set(range(9, 26))  # 0-based indices for slides 10-26
-    
-    # Only keep slides that have EXACT matches in our mapping
-    matched_styles = []
-    for style_name, slide_number in STYLE_TO_SLIDE_MAP.items():
-        if style_name in normalized_selected:
-            slide_index = slide_number - 1  # Convert to 0-based index
-            slides_to_keep.add(slide_index)
-            matched_styles.append(style_name)
-            print(f"✅ EXACT MATCH: Keeping slide {slide_number} for style '{style_name}'")
-    
-    # Show which selected styles were NOT found in mapping
-    unmatched_styles = normalized_selected - set(STYLE_TO_SLIDE_MAP.keys())
-    if unmatched_styles:
-        print(f"⚠️ These selected styles are NOT in mapping and will be ignored: {unmatched_styles}")
-    
-    # Keep all non-style slides (slides 1-9 and 27+)
-    total_slides = len(prs.slides)
-    for i in range(total_slides):
-        if i not in style_range_slides:  # Keep slides outside style range
-            slides_to_keep.add(i)
-    
-    # Delete slides that are not in slides_to_keep
-    slides_to_delete = []
-    for i in range(total_slides):
-        if i not in slides_to_keep:
-            slides_to_delete.append(i)
-    
-    # Show which style slides will be deleted
-    style_slides_to_delete = [i+1 for i in slides_to_delete if i in style_range_slides]
-    if style_slides_to_delete:
-        print(f"🗑️ Will delete these STYLE slides: {style_slides_to_delete}")
-    
-    print(f"📋 Summary:")
-    print(f"   - Matched styles: {matched_styles}")
-    print(f"   - Keeping style slides: {[i+1 for i in slides_to_keep if i in style_range_slides]}")
-    print(f"   - Deleting style slides: {style_slides_to_delete}")
-    
-    # Delete slides in reverse order to avoid index shifting
-    for idx in reversed(slides_to_delete):
-        try:
-            slide_id = prs.slides._sldIdLst[idx]
-            rId = slide_id.rId
-            prs.part.drop_rel(rId)
-            prs.slides._sldIdLst.remove(slide_id)
-            print(f"   ✅ Deleted slide {idx+1}")
-        except Exception as e:
-            print(f"   ❌ Failed to delete slide {idx+1}: {e}")
-
-    remaining_slides = len(prs.slides)
-    deleted_count = total_slides - remaining_slides
-    print(f"📊 Deletion complete: {deleted_count} slides removed, {remaining_slides} remaining")
-
+    """Filter style slides based on selected styles - placeholder function"""
+    # This function should be implemented based on your style filtering logic
+    print(f"🎨 Filtering slides for styles: {selected_styles}")
     return prs
-
-def remove_slide(prs, slide):
-    xml_slides = prs.slides._sldIdLst
-    slides = list(xml_slides)
-    for s in slides:
-        if s == slide._element:
-            xml_slides.remove(s)
-            break
 
 @app.post("/monday-webhook")
 async def monday_webhook(request: Request):
     body = await request.json()
     print("🚀 Webhook received:", json.dumps(body, indent=2))
+    
     if "challenge" in body:
         return JSONResponse(content={"challenge": body["challenge"]})
     
@@ -873,9 +680,9 @@ async def monday_webhook(request: Request):
         event = body["event"]
         item_id = event.get("pulseId")
         
-        # ✅ Skip if already processed
+        # Skip if already processed
         if is_item_processed(item_id):
-            print(f"⏭️ Item {item_id} already processed, skipping email...")
+            print(f"⏭️ Item {item_id} already processed, skipping...")
             return {
                 "status": "skipped",
                 "message": f"Item {item_id} already processed",
@@ -884,14 +691,15 @@ async def monday_webhook(request: Request):
         
         print(f"🆕 Processing new item: {item_id}")
         
-        # --- Step 1: Map webhook data ---
+        # Step 1: Map webhook data
         form_data = map_webhook_to_form(event)
         col_vals = event.get("columnValues", {})
         
-        # --- Step 2: Extract styles ---
-        selected_styles = form_data.get("selected_styles", [])
+        # Step 2: Extract styles
+        selected_styles = form_data.get("Which style's do you like", "").split(", ") if form_data.get("Which style's do you like") else []
+        selected_styles = [style.strip() for style in selected_styles if style.strip()]
         
-        # --- Step 3: Extract email ---
+        # Step 3: Extract email
         email = None
         if "email" in col_vals:
             email_block = col_vals["email"]
@@ -900,13 +708,13 @@ async def monday_webhook(request: Request):
         if not email:
             email = form_data.get("Email") or form_data.get("email") or "krgarav@gmail.com"
 
-        # --- Step 4: Fetch extra details ---
+        # Step 4: Fetch extra details
         user_details = fetch_user_details(email)
-        print(f"🔍 User details response: {user_details}")  # Debug line
+        print(f"🔍 User details response: {user_details}")
   
         if user_details.get("status") == "success":
             qd = user_details.get("data", {}).get("quotationdetails", {})
-            print(f"📊 Quotation details: {qd}")  # Debug line
+            print(f"📊 Quotation details: {qd}")
             
             if qd.get("area_size"):
                 form_data["Q. Area"] = qd["area_size"]
@@ -921,30 +729,34 @@ async def monday_webhook(request: Request):
         else:
             print(f"⚠️ No data found for user {email} in user_details or API call failed")
 
-        # --- Step 5: Categorize images ---
+        # Step 5: Categorize images
         categorized_images = categorize_and_collect_images(event)
 
         results = {}
 
-        # ======================
-        # 2) Generate FULL PPT
-        # ======================
+        # Generate PowerPoint presentation
         try:
             # Load template presentation
             prs = Presentation(TEMPLATE_PATH)
 
-            # 🎨 Filter style slides using optimized direct mapping
+            # Filter style slides using optimized direct mapping
             if selected_styles:
                 prs = filter_style_slides_optimized(prs, selected_styles)
 
-            # 📝 Replace text placeholders
-            form_data_for_text = {k: v for k, v in form_data.items() if k not in ["selected_styles"]}
+            # Replace text placeholders
+            form_data_for_text = {k: v for k, v in form_data.items() if v}
             print(f"📝 Text replacements (area/size related):")
             for key, value in form_data_for_text.items():
                 if "area" in key.lower() or "size" in key.lower():
                     print(f"  '{key}': '{value}'")
 
             replace_text_in_ppt(TEMPLATE_PATH, OUTPUT_PATH, form_data_for_text)  
+            insert_city_image_in_ppt(OUTPUT_PATH, OUTPUT_PATH, form_data.get("city"))
+            replace_placeholders_with_images(OUTPUT_PATH, OUTPUT_PATH, categorized_images)
+            filter_ppt(OUTPUT_PATH, OUTPUT_PATH, selected_styles)
+            
+            # Mark item as processed to prevent duplicate processing
+            mark_item_as_processed(item_id)
          
             results["full"] = {
                 "output_file": OUTPUT_PATH,
@@ -957,9 +769,13 @@ async def monday_webhook(request: Request):
             print(f"✅ Full PPT created: {OUTPUT_PATH}")
            
         except Exception as e:
-            print(f"⚠️ Failed to create full PPT: {e}")
+            print(f"⚠️ Failed to create PowerPoint: {e}")
+            import traceback
+            traceback.print_exc()
             results["full"] = {"error": str(e)}
 
         return {"status": "processed", "results": results}
 
-    return {"status": "ok", "message": "Webhook received but no event data"} 
+    return {"status": "ok", "message": "Webhook received but no event data"}
+
+

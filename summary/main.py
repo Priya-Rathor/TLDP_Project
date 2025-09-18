@@ -77,26 +77,6 @@ def post_update_to_monday(item_id, message, api_key=None):
         logger.error(f"❌ Error posting to Monday.com: {e}")
         return False
 
-def post_status_to_monday(item_id, status, details=""):
-    """Post processing status to Monday.com"""
-    status_icons = {
-        "STARTED": "🚀",
-        "DOWNLOADING": "📥",
-        "TRANSCRIBING": "📝",
-        "SUMMARIZING": "🎯",
-        "COMPLETED": "✅",
-        "ERROR": "❌"
-    }
-    
-    icon = status_icons.get(status.upper(), "ℹ️")
-    timestamp = __import__('datetime').datetime.now().strftime("%H:%M:%S")
-    
-    message = f"{icon} **{status.upper()}** [{timestamp}]"
-    if details:
-        message += f"\n{details}"
-    
-    return post_update_to_monday(item_id, message)
-
 def post_marketing_summary_to_monday(item_id, summary, transcript_length=0):
     """Post formatted marketing summary to Monday.com"""
     timestamp = __import__('datetime').datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -208,14 +188,6 @@ def process_video(file_url, pulse_name, pulse_id):
             return
 
         logger.info(f"🚀 Starting processing for pulse {pulse_id}: {pulse_name}")
-        
-        # Post initial status to Monday.com
-        if MONDAY_API_KEY:
-            post_status_to_monday(
-                int(pulse_id), 
-                "STARTED", 
-                f"Beginning video processing for: {pulse_name}"
-            )
 
         # Convert Google Drive link → direct download
         direct_url = convert_google_drive_url(file_url)
@@ -224,10 +196,6 @@ def process_video(file_url, pulse_name, pulse_id):
         # Sanitize filename
         safe_pulse_name = "".join(c for c in pulse_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
         video_path = os.path.join(DOWNLOAD_DIR, f"{safe_pulse_name}.mp4")
-
-        # Post downloading status
-        if MONDAY_API_KEY:
-            post_status_to_monday(int(pulse_id), "DOWNLOADING", "Downloading video file...")
 
         # Download video
         logger.info(f"📥 Downloading video to: {video_path}")
@@ -244,10 +212,6 @@ def process_video(file_url, pulse_name, pulse_id):
                 post_error_to_monday(int(pulse_id), error_msg, "FILE_ERROR")
             raise Exception(error_msg)
 
-        # Post transcription status
-        if MONDAY_API_KEY:
-            post_status_to_monday(int(pulse_id), "TRANSCRIBING", "Extracting audio and generating transcript...")
-
         # Transcribe video
         logger.info("🎵 Starting audio extraction and transcription...")
         transcript_file = os.path.join(DOWNLOAD_DIR, f"{safe_pulse_name}_transcript.txt")
@@ -261,10 +225,6 @@ def process_video(file_url, pulse_name, pulse_id):
         
         logger.info("✅ Transcription complete!")
         logger.info(f"📄 Transcript preview: {transcript[:200]}...")
-
-        # Post summarization status
-        if MONDAY_API_KEY:
-            post_status_to_monday(int(pulse_id), "SUMMARIZING", "Generating marketing summary...")
 
         # Generate marketing summary
         logger.info("📝 Generating marketing summary...")
@@ -283,19 +243,6 @@ def process_video(file_url, pulse_name, pulse_id):
                 logger.info("✅ Marketing summary posted to Monday.com successfully")
             else:
                 logger.warning("⚠️ Failed to post marketing summary to Monday.com")
-
-        # Post completion status
-        if MONDAY_API_KEY:
-            completion_details = f"""Processing completed successfully!
-
-📊 **Results:**
-• Transcript: {len(transcript):,} characters
-• Summary: {len(summary):,} characters
-• Files saved: {safe_pulse_name}_transcript.txt, {safe_pulse_name}_marketing_summary.txt
-
-🎯 **Marketing summary has been posted as an update above.**"""
-            
-            post_status_to_monday(int(pulse_id), "COMPLETED", completion_details)
 
         # Clean up video file to save space (optional)
         try:
