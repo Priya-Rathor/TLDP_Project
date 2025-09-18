@@ -1,58 +1,59 @@
 import os
-import smtplib
-from email.message import EmailMessage
+import base64
+from sib_api_v3_sdk import ApiClient, Configuration
+from sib_api_v3_sdk.api import transactional_emails_api
+from sib_api_v3_sdk.models import SendSmtpEmail, SendSmtpEmailAttachment, SendSmtpEmailTo
+from dotenv import load_dotenv
 
-def send_email_with_ppt(recipient: str, subject: str, body: str, file_paths: list):
+# Load environment variables
+load_dotenv()
+
+# Brevo API key from env
+API_KEY = os.getenv("BREVO_API_KEY")
+
+# Initialize API client
+configuration = Configuration()
+configuration.api_key['api-key'] = API_KEY
+api_instance = transactional_emails_api.TransactionalEmailsApi(ApiClient(configuration))
+
+
+def send_email_with_ppt(
+    recipient: str,
+    subject: str,
+    html_content: str,
+    sender_email: str,
+    sender_name: str = "Sender",
+    ppt_paths: list = None
+):
     """
-    Send an email with one or more PPT attachments.
-    Includes better error handling and debug logs.
+    Send an email via Brevo API with optional PPT attachments.
+    
+    :param recipient: Recipient email address
+    :param subject: Email subject
+    :param html_content: HTML content of the email
+    :param sender_email: Verified sender email in Brevo
+    :param sender_name: Name of the sender
+    :param ppt_paths: List of local PPT file paths to attach
     """
-    sender = os.getenv("EMAIL_USER", "pr3101165@gmail.com")
-    password = os.getenv("EMAIL_PASSWORD", "vvrc wfvy pkox wsqn")
-
-    if not sender or not password:
-        print("❌ ERROR: Email credentials are missing. Set EMAIL_USER and EMAIL_PASSWORD.")
-        return False
-
-    msg = EmailMessage()
-    msg["From"] = sender
-    msg["To"] = recipient
-    msg["Subject"] = subject
-    msg.set_content(body)
-
-    # Attach all PPTs
-    for file_path in file_paths:
-        if not os.path.exists(file_path):
-            print(f"⚠️ File not found, skipping: {file_path}")
-            continue
-
-        try:
-            with open(file_path, "rb") as f:
-                file_data = f.read()
-                file_name = os.path.basename(file_path)
-                msg.add_attachment(
-                    file_data,
-                    maintype="application",
-                    subtype="vnd.openxmlformats-officedocument.presentationml.presentation",
-                    filename=file_name
-                )
-                print(f"📎 Attached: {file_name}")
-        except Exception as e:
-            print(f"❌ Failed to attach {file_path}: {e}")
-
+    attachments = []
+    
+    if ppt_paths:
+        for path in ppt_paths:
+            with open(path, "rb") as f:
+                encoded_content = base64.b64encode(f.read()).decode()
+            attachments.append(SendSmtpEmailAttachment(content=encoded_content, name=os.path.basename(path)))
+    
+    email = SendSmtpEmail(
+        to=[SendSmtpEmailTo(email=recipient)],
+        sender={"email": sender_email, "name": sender_name},
+        subject=subject,
+        html_content=html_content,
+        attachment=attachments if attachments else None
+    )
+    
     try:
-        print(f"📧 Connecting to Gmail SMTP as {sender}...")
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-            smtp.login(sender, password)
-            smtp.send_message(msg)
-        print(f"✅ Email sent to {recipient} with {len(file_paths)} attachments")
-        return True
-
-    except smtplib.SMTPAuthenticationError:
-        print("❌ Authentication failed: Invalid email or password (check App Password settings).")
-    except smtplib.SMTPConnectError:
-        print("❌ Connection failed: Could not connect to Gmail SMTP server.")
+        response = api_instance.send_transac_email(email)
+        print("✅ Email sent successfully:", response)
     except Exception as e:
-        print(f"❌ Unexpected error while sending email: {e}")
+        print("❌ Failed to send email:", e)
 
-    return False

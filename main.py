@@ -15,8 +15,13 @@ from style import filter_ppt
 
 app = FastAPI()
 
+
+FILES_DIR ="files"
+os.makedirs(FILES_DIR, exist_ok=True)
 TEMPLATE_PATH = "template.pptx"
-OUTPUT_PATH = "output.pptx"
+BTEMPLATE_PATH="btemplate.pptx"
+BASE_URL =os.getenv("BASE_URL")
+
 MONDAY_API_KEY = os.getenv("MONDAY_API_KEY", "eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjU0NjI5MjM1NywiYWFpIjoxMSwidWlkIjo3NDc3Njk5NywiaWFkIjoiMjAyNS0wOC0wNFQwOTo0MzowNS4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6MTIxNDMyMDQsInJnbiI6InVzZTEifQ.yYeelRXHOZlaxwYHBAvi6eXRzD2fNn1H-jX-Pd8Ukcw")
 MONDAY_API_URL = "https://api.monday.com/v2"
 
@@ -396,6 +401,8 @@ def map_webhook_to_form(event: dict):
             if styles:
                 print(f"🎨 Found styles in column '{col_name}': {styles}")
                 break
+            
+            
 
     return {
         "9. What is the property type": col.get("dropdown76", {}).get("chosenValues", [{}])[0].get("name"),
@@ -405,9 +412,7 @@ def map_webhook_to_form(event: dict):
         "country": col.get("country6", {}).get("countryName"),
         "11. Space to be designed": ", ".join([v.get("name", "") for v in col.get("dropdown0", {}).get("chosenValues", [])]),
         "What is the area size?": col.get("short_text8fr4spel", {}).get("value"),
-        "Which style's do you like": ", ".join(
-        [s.get("name") for s in col.get("dropdown", {}).get("chosenValues", [])]
-    ) if col.get("dropdown", {}).get("chosenValues") else "",
+        "Which style's do you like": ", ".join(styles),
         "5. How old are you": col.get("status", {}).get("label", {}).get("text"),
         "12. How many people will leave in the space": col.get("text1", {}).get("value"),
         "10. What best describes your situation": col.get("single_selecti4d0sw1", {}).get("label", {}).get("text"),
@@ -419,6 +424,10 @@ def map_webhook_to_form(event: dict):
         "15. What words describe best the mood and feel": col.get("short_text5fonuzuu", {}).get("value"),
         "XXXX":col.get("short_text8fr4spel", {}).get("value"),
     }
+
+
+
+
 
 def fetch_user_details(email: str):
     try:
@@ -668,6 +677,34 @@ def filter_style_slides_optimized(prs, selected_styles):
     print(f"🎨 Filtering slides for styles: {selected_styles}")
     return prs
 
+
+from fastapi.responses import FileResponse
+
+@app.get("/download-ppt")
+async def download_ppt(item_id: int, ppt_type: str = "output"):
+    """
+    Download a generated PPT by item_id.
+    ppt_type can be 'output' or 'brochure'.
+    """
+    if ppt_type == "output":
+        file_name = f"{item_id}_output.pptx"
+    elif ppt_type == "brochure":
+        file_name = f"{item_id}_boutput.pptx"
+    else:
+        return {"error": "Invalid ppt_type. Use 'output' or 'brochure'."}
+
+    file_path = os.path.join(FILES_DIR, file_name)
+
+    if os.path.exists(file_path):
+        return FileResponse(
+            file_path,
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            filename=file_name
+        )
+    return {"error": f"File not found for item_id {item_id} and type {ppt_type}"}
+
+
+
 @app.post("/monday-webhook")
 async def monday_webhook(request: Request):
     body = await request.json()
@@ -699,6 +736,10 @@ async def monday_webhook(request: Request):
         selected_styles = form_data.get("Which style's do you like", "").split(", ") if form_data.get("Which style's do you like") else []
         selected_styles = [style.strip() for style in selected_styles if style.strip()]
         
+        # 3: Prepare file paths
+        
+        OUTPUT_PATH = os.path.join(FILES_DIR, f"{item_id}_output.pptx")
+        BOUTPUT_PATH = os.path.join(FILES_DIR, f"{item_id}_boutput.pptx")
         # Step 3: Extract email
         email = None
         if "email" in col_vals:
@@ -733,7 +774,9 @@ async def monday_webhook(request: Request):
         categorized_images = categorize_and_collect_images(event)
 
         results = {}
-
+        # ======================
+        # 2) Generate FULL PPT  
+        # ======================
         # Generate PowerPoint presentation
         try:
             # Load template presentation
@@ -774,8 +817,91 @@ async def monday_webhook(request: Request):
             traceback.print_exc()
             results["full"] = {"error": str(e)}
 
+        # ======================
+        # 3) Generate BROCHURE PPT
+        # ======================
+        try:
+            # Pick best-fit images from categorized_images + styles
+            circle_img = (categorized_images.get("existing_pictures") or [None])[0]  
+            calendar_bg = (categorized_images.get("existing_pictures") or [None])[0]
+            layout_img = (categorized_images.get("floor_plans") or [None])[0]
+            layout_bg = (
+                (categorized_images.get("existing_pictures") or [None])[1]
+                if len(categorized_images.get("existing_pictures", [])) > 1
+                else calendar_bg
+            )
+            extra_images =[]
+            extra_images.extend(categorized_images.get("existing_pictures", []))
+            extra_images.extend(categorized_images.get("floor_plans", []))
+            extra_images.extend(categorized_images.get("elevation_drawings", []))
+
+            brochure_ppt = create_brochure_ppt(
+                BTEMPLATE_PATH,
+                BOUTPUT_PATH,
+                form_data=form_data,
+                circle_img=circle_img,
+                calendar_bg=calendar_bg,
+                layout_img=layout_img,
+                layout_bg=layout_bg,
+                extra_images=extra_images,
+            )
+
+            results["brochure"] = {
+                "output_file": brochure_ppt,
+                "ppt_type": "brochure",
+                "styles_processed": selected_styles,
+                "style_images_found": len(selected_styles),
+                "email": email,
+                "project_name": form_data.get("Project Name", "Unknown"),
+            }
+
+            print(f"✅ Brochure PPT created: {brochure_ppt}")
+            # send_email_with_ppt(email, brochure_ppt, form_data)  # optional email sending
+
+        except Exception as e:
+            print(f"⚠️ Failed to create brochure PPT: {e}")
+            results["brochure"] = {"error": str(e)}
+
+        
+        
+         # ======================
+         # 4) Send email with attachment
+         # ======================
+        output_url = f"{BASE_URL}/download-ppt?item_id={item_id}&ppt_type=output"
+        brochure_url = f"{BASE_URL}/download-ppt?item_id={item_id}&ppt_type=brochure"
+
+        subject = f"Your Project Brochure - {form_data.get('Q. Project Name', 'Unknown')}"
+
+        html_content = f"""
+        <p>Hello,</p>
+        <p>Your project <b>{form_data.get('Q. Project Name', 'Unknown')}</b> has been processed.</p>
+        <p>You can download your files here:</p> 
+        <ul>
+           <li><a href="{output_url}">Full PPT</a></li>
+           <li><a href="{brochure_url}">Brochure PPT</a></li>
+        </ul>
+        <p>Regards,<br>Team</p>
+        """
+
+        send_email_with_ppt(
+            recipient="rathorpriya1718@gmail.com",   # ✅ fixed typo from gamil → gmail
+            subject=subject,
+            html_content=html_content,
+            sender_email=os.getenv("BREVO_SENDER_EMAIL"),
+            sender_name="Project Team",
+            ppt_paths=[]  # no need to attach, just send links
+            )
+
+
+        # Mark item as processed to prevent duplicate processing
+        mark_item_as_processed(item_id)
+
+
+
         return {"status": "processed", "results": results}
 
     return {"status": "ok", "message": "Webhook received but no event data"}
+
+
 
 
